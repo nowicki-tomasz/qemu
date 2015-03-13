@@ -92,6 +92,55 @@ static const ARMCPRegInfo cortexa57_cp_reginfo[] = {
     REGINFO_SENTINEL
 };
 
+static void aarch64_ThunderX_initfn(Object *obj)
+{
+    ARMCPU *cpu = ARM_CPU(obj);
+
+    cpu->dtb_compatible = "cavium,thunder-88xx";
+    set_feature(&cpu->env, ARM_FEATURE_V8);
+    set_feature(&cpu->env, ARM_FEATURE_VFP4);
+    set_feature(&cpu->env, ARM_FEATURE_GENERIC_TIMER);
+    set_feature(&cpu->env, ARM_FEATURE_AARCH64);
+    set_feature(&cpu->env, ARM_FEATURE_V8_AES);
+    set_feature(&cpu->env, ARM_FEATURE_V8_SHA1);
+    set_feature(&cpu->env, ARM_FEATURE_V8_SHA256);
+    set_feature(&cpu->env, ARM_FEATURE_V8_PMULL);
+    set_feature(&cpu->env, ARM_FEATURE_CRC);
+    cpu->kvm_target = QEMU_KVM_ARM_TARGET_THUNDERX;
+    cpu->midr = 0x430f0a10;
+    cpu->reset_fpsid = 0x0;
+    /* we don't support ARM32 */
+    cpu->mvfr0 = 0x0;
+    cpu->mvfr1 = 0x0;
+    cpu->mvfr2 = 0x0;
+    cpu->ctr = 0x85558005;
+    cpu->reset_sctlr = 0x30d00980;
+    cpu->id_pfr0 = 0x0;
+    cpu->id_pfr1 = 0x0;
+    cpu->id_dfr0 = 0x0;
+    cpu->id_afr0 = 0x0;
+    cpu->id_mmfr0 = 0x0;
+    cpu->id_mmfr1 = 0x0;
+    cpu->id_mmfr2 = 0x0;
+    cpu->id_mmfr3 = 0x0;
+    cpu->id_isar0 = 0x0;
+    cpu->id_isar1 = 0x0;
+    cpu->id_isar2 = 0x0;
+    cpu->id_isar3 = 0x0;
+    cpu->id_isar4 = 0x0;
+    cpu->id_isar5 = 0x0;
+    cpu->id_aa64pfr0 = 0x00001111;
+    cpu->id_aa64dfr0 = 0x50305407;
+    cpu->id_aa64isar0 = 0x10211120;
+    cpu->id_aa64mmfr0 = 0x00101125;
+    cpu->dbgdidr = 0x0;
+    cpu->clidr = 0x09200023;
+    cpu->ccsidr[0] = 0xe0fb; /* L1 dcache */
+    cpu->ccsidr[1] = 0x1e133; /* L1 icache */
+    cpu->ccsidr[2] = 0x3ffe07b; /* L2 cache */
+    cpu->dcz_blocksize = 5; /* 128 bytes */
+}
+
 static void aarch64_a57_initfn(Object *obj)
 {
     ARMCPU *cpu = ARM_CPU(obj);
@@ -170,6 +219,7 @@ typedef struct ARMCPUInfo {
 
 static const ARMCPUInfo aarch64_cpus[] = {
     { .name = "cortex-a57",         .initfn = aarch64_a57_initfn },
+    { .name = "ThunderX",         .initfn = aarch64_ThunderX_initfn },
 #ifdef CONFIG_USER_ONLY
     { .name = "any",         .initfn = aarch64_any_initfn },
 #endif

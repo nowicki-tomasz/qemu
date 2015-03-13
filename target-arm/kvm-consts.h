@@ -127,6 +127,7 @@ MISMATCH_CHECK(QEMU_PSCI_RET_DISABLED, PSCI_RET_DISABLED)
 #define QEMU_KVM_ARM_TARGET_AEM_V8 0
 #define QEMU_KVM_ARM_TARGET_FOUNDATION_V8 1
 #define QEMU_KVM_ARM_TARGET_CORTEX_A57 2
+#define QEMU_KVM_ARM_TARGET_THUNDERX 3
 
 /* There's no kernel define for this: sentinel value which
  * matches no KVM target value for either 64 or 32 bit
