@@ -66,6 +66,7 @@ enum {
     VIRT_CPUPERIPHS,
     VIRT_GIC_DIST,
     VIRT_GIC_CPU,
+    VIRT_GIC_REDIST,
     VIRT_UART,
     VIRT_MMIO,
     VIRT_RTC,
@@ -142,6 +143,31 @@ static const MemMapEntry a15memmap[] = {
     [VIRT_MEM] =        { 0x40000000, 30ULL * 1024 * 1024 * 1024 },
 };
 
+static const MemMapEntry ThunderXmemmap[] = {
+    /* Space up to 0x8000000 is reserved for a boot ROM */
+    [VIRT_FLASH] =      {          0, 0x08000000 },
+    [VIRT_CPUPERIPHS] = { 0x08000000, 0x00020000 },
+    /* GIC distributor and CPU interfaces sit inside the CPU peripheral space */
+    [VIRT_GIC_DIST] =   { 0x08000000, 0x00010000 },
+    [VIRT_GIC_CPU] =    { 0, 0},
+    [VIRT_GIC_REDIST] = { 0x08010000, 0x00020000 },
+    [VIRT_UART] =       { 0x09000000, 0x00001000 },
+    [VIRT_RTC] =        { 0x09010000, 0x00001000 },
+    [VIRT_FW_CFG] =     { 0x09020000, 0x0000000a },
+    [VIRT_MMIO] =       { 0x0a000000, 0x00000200 },
+    /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
+    /*
+     * PCIE verbose map:
+     *
+     * MMIO window      { 0x10000000, 0x2eff0000 },
+     * PIO window       { 0x3eff0000, 0x00010000 },
+     * ECAM             { 0x3f000000, 0x01000000 },
+     */
+    [VIRT_PCIE] =       { 0x10000000, 0x30000000 },
+    [VIRT_MEM] =        { 0x40000000, 30ULL * 1024 * 1024 * 1024 },
+};
+
+
 static const int a15irqmap[] = {
     [VIRT_UART] = 1,
     [VIRT_RTC] = 2,
@@ -158,6 +184,11 @@ static VirtBoardInfo machines[] = {
     {
         .cpu_model = "cortex-a57",
         .memmap = a15memmap,
+        .irqmap = a15irqmap,
+    },
+    {
+        .cpu_model = "ThunderX",
+        .memmap = ThunderXmemmap,
         .irqmap = a15irqmap,
     },
     {
@@ -322,7 +353,7 @@ static void fdt_add_cpu_nodes(const VirtBoardInfo *vbi)
     }
 }
 
-static uint32_t fdt_add_gic_node(const VirtBoardInfo *vbi)
+static uint32_t fdt_add_gicv2_node(const VirtBoardInfo *vbi)
 {
     uint32_t gic_phandle;
 
@@ -345,6 +376,28 @@ static uint32_t fdt_add_gic_node(const VirtBoardInfo *vbi)
     return gic_phandle;
 }
 
+static uint32_t fdt_add_gicv3_node(const VirtBoardInfo *vbi)
+{
+    uint32_t gic_phandle;
+
+    gic_phandle = qemu_fdt_alloc_phandle(vbi->fdt);
+    qemu_fdt_setprop_cell(vbi->fdt, "/", "interrupt-parent", gic_phandle);
+
+    qemu_fdt_add_subnode(vbi->fdt, "/intc");
+    qemu_fdt_setprop_string(vbi->fdt, "/intc", "compatible",
+                            "arm,gic-v3");
+    qemu_fdt_setprop_cell(vbi->fdt, "/intc", "#interrupt-cells", 3);
+    qemu_fdt_setprop(vbi->fdt, "/intc", "interrupt-controller", NULL, 0);
+    qemu_fdt_setprop_sized_cells(vbi->fdt, "/intc", "reg",
+                                     2, vbi->memmap[VIRT_GIC_DIST].base,
+                                     2, vbi->memmap[VIRT_GIC_DIST].size,
+                                     2, vbi->memmap[VIRT_GIC_REDIST].base,
+                                     2, vbi->memmap[VIRT_GIC_REDIST].size);
+    qemu_fdt_setprop_cell(vbi->fdt, "/intc", "phandle", gic_phandle);
+
+    return gic_phandle;
+}
+
 static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
 {
     /* We create a standalone GIC v2 */
@@ -358,7 +411,10 @@ static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
     }
 
     gicdev = qdev_create(NULL, gictype);
-    qdev_prop_set_uint32(gicdev, "revision", 2);
+    if(vbi->memmap[VIRT_GIC_CPU].base != 0)
+	qdev_prop_set_uint32(gicdev, "revision", 2);
+    else /* GICv3 Only */
+	qdev_prop_set_uint32(gicdev, "revision", 3);
     qdev_prop_set_uint32(gicdev, "num-cpu", smp_cpus);
     /* Note that the num-irq property counts both internal and external
      * interrupts; there are always 32 of the former (mandated by GIC spec).
@@ -367,7 +423,10 @@ static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
     qdev_init_nofail(gicdev);
     gicbusdev = SYS_BUS_DEVICE(gicdev);
     sysbus_mmio_map(gicbusdev, 0, vbi->memmap[VIRT_GIC_DIST].base);
-    sysbus_mmio_map(gicbusdev, 1, vbi->memmap[VIRT_GIC_CPU].base);
+    if(vbi->memmap[VIRT_GIC_CPU].base != 0)
+	sysbus_mmio_map(gicbusdev, 1, vbi->memmap[VIRT_GIC_CPU].base);
+    else
+	sysbus_mmio_map(gicbusdev, 1, vbi->memmap[VIRT_GIC_REDIST].base);
 
     /* Wire the outputs from each CPU's generic timer to the
      * appropriate GIC PPI inputs, and the GIC's IRQ output to
@@ -392,7 +451,10 @@ static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
         pic[i] = qdev_get_gpio_in(gicdev, i);
     }
 
-    return fdt_add_gic_node(vbi);
+    if(vbi->memmap[VIRT_GIC_CPU].base != 0)
+	return fdt_add_gicv2_node(vbi);
+    else
+	return fdt_add_gicv3_node(vbi);
 }
 
 static void create_uart(const VirtBoardInfo *vbi, qemu_irq *pic)
