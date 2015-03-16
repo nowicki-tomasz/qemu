@@ -526,37 +526,9 @@ static void kvm_arm_gic_reset(DeviceState *dev)
     kvm_arm_gic_put(s);
 }
 
-static void kvm_arm_gic_realize(DeviceState *dev, Error **errp)
+static int kvm_arm_gicv2_create(GICState *s, SysBusDevice *sdb)
 {
-    int i;
-    GICState *s = KVM_ARM_GIC(dev);
-    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
-    KVMARMGICClass *kgc = KVM_ARM_GIC_GET_CLASS(s);
-    Error *local_err = NULL;
     int ret;
-
-    kgc->parent_realize(dev, &local_err);
-    if (local_err) {
-        error_propagate(errp, local_err);
-        return;
-    }
-
-    i = s->num_irq - GIC_INTERNAL;
-    /* For the GIC, also expose incoming GPIO lines for PPIs for each CPU.
-     * GPIO array layout is thus:
-     *  [0..N-1] SPIs
-     *  [N..N+31] PPIs for CPU 0
-     *  [N+32..N+63] PPIs for CPU 1
-     *   ...
-     */
-    i += (GIC_INTERNAL * s->num_cpu);
-    qdev_init_gpio_in(dev, kvm_arm_gic_set_irq, i);
-    /* We never use our outbound IRQ lines but provide them so that
-     * we maintain the same interface as the non-KVM GIC.
-     */
-    for (i = 0; i < s->num_cpu; i++) {
-        sysbus_init_irq(sbd, &s->parent_irq[i]);
-    }
 
     /* Try to create the device via the device control API */
     s->dev_fd = -1;
@@ -564,8 +536,8 @@ static void kvm_arm_gic_realize(DeviceState *dev, Error **errp)
     if (ret >= 0) {
         s->dev_fd = ret;
     } else if (ret != -ENODEV && ret != -ENOTSUP) {
-        error_setg_errno(errp, -ret, "error creating in-kernel VGIC");
-        return;
+        error_setg_errno(errp, -ret, "error creating in-kernel VGICv2");
+        return -1;
     }
 
     if (kvm_gic_supports_attr(s, KVM_DEV_ARM_VGIC_GRP_NR_IRQS, 0)) {
@@ -596,6 +568,42 @@ static void kvm_arm_gic_realize(DeviceState *dev, Error **errp)
                             KVM_DEV_ARM_VGIC_GRP_ADDR,
                             KVM_VGIC_V2_ADDR_TYPE_CPU,
                             s->dev_fd);
+
+    return 0;
+}
+
+static void kvm_arm_gic_realize(DeviceState *dev, Error **errp)
+{
+    int i;
+    GICState *s = KVM_ARM_GIC(dev);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+    KVMARMGICClass *kgc = KVM_ARM_GIC_GET_CLASS(s);
+    Error *local_err = NULL;
+
+    kgc->parent_realize(dev, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+
+    i = s->num_irq - GIC_INTERNAL;
+    /* For the GIC, also expose incoming GPIO lines for PPIs for each CPU.
+     * GPIO array layout is thus:
+     *  [0..N-1] SPIs
+     *  [N..N+31] PPIs for CPU 0
+     *  [N+32..N+63] PPIs for CPU 1
+     *   ...
+     */
+    i += (GIC_INTERNAL * s->num_cpu);
+    qdev_init_gpio_in(dev, kvm_arm_gic_set_irq, i);
+    /* We never use our outbound IRQ lines but provide them so that
+     * we maintain the same interface as the non-KVM GIC.
+     */
+    for (i = 0; i < s->num_cpu; i++) {
+        sysbus_init_irq(sbd, &s->parent_irq[i]);
+    }
+
+    kvm_arm_gicv2_create(s, sdb);
 }
 
 static void kvm_arm_gic_class_init(ObjectClass *klass, void *data)
