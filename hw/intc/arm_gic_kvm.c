@@ -89,7 +89,7 @@ static void kvm_arm_gic_set_irq(void *opaque, int irq, int level)
 
 static bool kvm_arm_gic_can_save_restore(GICState *s)
 {
-	if(s->version <= 2)
+	if(s->revision <= 2)
 		return s->dev_fd >= 0;
 	else /* Gicv3 dosn't support Store and Restore yet */
 		return 0;
@@ -529,7 +529,7 @@ static void kvm_arm_gic_reset(DeviceState *dev)
     kvm_arm_gic_put(s);
 }
 
-static int kvm_arm_gicv2_create(GICState *s, SysBusDevice *sdb)
+static int kvm_arm_gicv2_create(GICState *s, SysBusDevice *sbd, Error **errp)
 {
     int ret;
 
@@ -538,8 +538,7 @@ static int kvm_arm_gicv2_create(GICState *s, SysBusDevice *sdb)
     ret = kvm_create_device(kvm_state, KVM_DEV_TYPE_ARM_VGIC_V2, false);
     if (ret >= 0) {
         s->dev_fd = ret;
-    } else if (ret != -ENODEV && ret != -ENOTSUP) {
-        error_setg_errno(errp, -ret, "error creating in-kernel VGICv2");
+    } else {
         return -1;
     }
 
@@ -575,7 +574,7 @@ static int kvm_arm_gicv2_create(GICState *s, SysBusDevice *sdb)
     return 0;
 }
 
-static int kvm_arm_gicv3_create(GICState *s, SysBusDevice *sdb)
+static int kvm_arm_gicv3_create(GICState *s, SysBusDevice *sbd, Error **errp)
 {
     int ret;
 
@@ -599,7 +598,7 @@ static int kvm_arm_gicv3_create(GICState *s, SysBusDevice *sdb)
                                    "kvm-gic_dist", KVM_VGIC_V3_DIST_SIZE);
     sysbus_init_mmio(sbd, &s->iomem);
     kvm_arm_register_device(&s->iomem,
-                            (KVM_ARM_DEVICE_VGIC_V3 << KVM_ARM_DEVICE_ID_SHIFT)
+                            (KVM_DEV_TYPE_ARM_VGIC_V3 << KVM_ARM_DEVICE_ID_SHIFT)
                             | KVM_VGIC_V3_ADDR_TYPE_DIST,
                             KVM_DEV_ARM_VGIC_GRP_ADDR,
                             KVM_VGIC_V3_ADDR_TYPE_DIST,
@@ -610,7 +609,7 @@ static int kvm_arm_gicv3_create(GICState *s, SysBusDevice *sdb)
                                    "kvm-gic_dist", KVM_VGIC_V3_REDIST_SIZE);
     sysbus_init_mmio(sbd, &s->rdistiomem);
     kvm_arm_register_device(&s->rdistiomem,
-                            (KVM_ARM_DEVICE_VGIC_V3 << KVM_ARM_DEVICE_ID_SHIFT)
+                            (KVM_DEV_TYPE_ARM_VGIC_V3 << KVM_ARM_DEVICE_ID_SHIFT)
                             | KVM_VGIC_V3_ADDR_TYPE_REDIST,
                             KVM_DEV_ARM_VGIC_GRP_ADDR,
                             KVM_VGIC_V3_ADDR_TYPE_REDIST,
@@ -649,9 +648,9 @@ static void kvm_arm_gic_realize(DeviceState *dev, Error **errp)
         sysbus_init_irq(sbd, &s->parent_irq[i]);
     }
 
-    if(kvm_arm_gicv2_create(s, sdb)) {
+    if(kvm_arm_gicv2_create(s, sbd, errp)) {
 	    /* failed creating GICv2 in kernel try Gicv3*/
-	    kvm_arm_gicv3_create(s, sdb);
+	    kvm_arm_gicv3_create(s, sbd, errp);
     }
 }
 

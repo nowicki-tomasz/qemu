@@ -87,8 +87,8 @@ struct kvm_regs {
 #define KVM_VGIC_ITS_CREATE_DEVICE	0
 #define KVM_VGIC_ITS_GET_PHYS_BASE	1
 
-#define KVM_VGIC_V3_DIST_SIZE		SZ_64K
-#define KVM_VGIC_V3_REDIST_SIZE		(2 * SZ_64K)
+#define KVM_VGIC_V3_DIST_SIZE		0x00010000
+#define KVM_VGIC_V3_REDIST_SIZE		(2 * 0x00010000)
 #define KVM_VGIC_V3_ITS_SIZE		0x200000
 
 #define KVM_ARM_VCPU_POWER_OFF		0 /* CPU is started in OFF state */

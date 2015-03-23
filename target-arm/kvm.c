@@ -543,7 +543,12 @@ int kvm_arch_irqchip_create(KVMState *s)
 
     ret = kvm_create_device(s, KVM_DEV_TYPE_ARM_VGIC_V2, true);
     if (ret == 0) {
-        return 1;
+        return 2;
+    }
+    /* Before declaring result try GICv3 also */
+    ret = kvm_create_device(s, KVM_DEV_TYPE_ARM_VGIC_V3, true);
+    if (ret == 0) {
+        return 3;
     }
 
     return 0;

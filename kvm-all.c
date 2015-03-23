@@ -1382,6 +1382,8 @@ static int kvm_irqchip_create(MachineState *machine, KVMState *s)
             return ret;
         }
     }
+    else
+	    machine->irqchip_revision = ret;
 
     kvm_kernel_irqchip = true;
     /* If we have an in-kernel IRQ chip then we must have asynchronous

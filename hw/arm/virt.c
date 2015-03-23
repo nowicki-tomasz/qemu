@@ -127,6 +127,7 @@ static const MemMapEntry a15memmap[] = {
     /* GIC distributor and CPU interfaces sit inside the CPU peripheral space */
     [VIRT_GIC_DIST] =   { 0x08000000, 0x00010000 },
     [VIRT_GIC_CPU] =    { 0x08010000, 0x00010000 },
+    [VIRT_GIC_REDIST] = { 0x08010000, 0x00020000 },
     [VIRT_UART] =       { 0x09000000, 0x00001000 },
     [VIRT_RTC] =        { 0x09010000, 0x00001000 },
     [VIRT_FW_CFG] =     { 0x09020000, 0x0000000a },
@@ -398,7 +399,8 @@ static uint32_t fdt_add_gicv3_node(const VirtBoardInfo *vbi)
     return gic_phandle;
 }
 
-static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
+static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic,
+			   int gic_revision)
 {
     /* We create a standalone GIC v2 */
     DeviceState *gicdev;
@@ -411,10 +413,7 @@ static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
     }
 
     gicdev = qdev_create(NULL, gictype);
-    if(vbi->memmap[VIRT_GIC_CPU].base != 0)
-	qdev_prop_set_uint32(gicdev, "revision", 2);
-    else /* GICv3 Only */
-	qdev_prop_set_uint32(gicdev, "revision", 3);
+    qdev_prop_set_uint32(gicdev, "revision", gic_revision);
     qdev_prop_set_uint32(gicdev, "num-cpu", smp_cpus);
     /* Note that the num-irq property counts both internal and external
      * interrupts; there are always 32 of the former (mandated by GIC spec).
@@ -423,7 +422,7 @@ static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
     qdev_init_nofail(gicdev);
     gicbusdev = SYS_BUS_DEVICE(gicdev);
     sysbus_mmio_map(gicbusdev, 0, vbi->memmap[VIRT_GIC_DIST].base);
-    if(vbi->memmap[VIRT_GIC_CPU].base != 0)
+    if (gic_revision < 3)
 	sysbus_mmio_map(gicbusdev, 1, vbi->memmap[VIRT_GIC_CPU].base);
     else
 	sysbus_mmio_map(gicbusdev, 1, vbi->memmap[VIRT_GIC_REDIST].base);
@@ -451,7 +450,7 @@ static uint32_t create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
         pic[i] = qdev_get_gpio_in(gicdev, i);
     }
 
-    if(vbi->memmap[VIRT_GIC_CPU].base != 0)
+    if(gic_revision < 3)
 	return fdt_add_gicv2_node(vbi);
     else
 	return fdt_add_gicv3_node(vbi);
@@ -867,7 +866,7 @@ static void machvirt_init(MachineState *machine)
 
     create_flash(vbi);
 
-    gic_phandle = create_gic(vbi, pic);
+    gic_phandle = create_gic(vbi, pic, machine->irqchip_revision);
 
     create_uart(vbi, pic);
 

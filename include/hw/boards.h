@@ -133,6 +133,7 @@ struct MachineState {
     char *accel;
     bool kernel_irqchip_allowed;
     bool kernel_irqchip_required;
+    int  irqchip_revision;
     int kvm_shadow_mem;
     char *dtb;
     char *dumpdtb;
