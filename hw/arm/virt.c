@@ -393,7 +393,7 @@ static uint32_t fdt_add_gicv3_node(const VirtBoardInfo *vbi)
                                      2, vbi->memmap[VIRT_GIC_DIST].base,
                                      2, vbi->memmap[VIRT_GIC_DIST].size,
                                      2, vbi->memmap[VIRT_GIC_REDIST].base,
-                                     2, vbi->memmap[VIRT_GIC_REDIST].size);
+                                     2, (vbi->memmap[VIRT_GIC_REDIST].size * vbi->smp_cpus));
     qemu_fdt_setprop_cell(vbi->fdt, "/intc", "phandle", gic_phandle);
 
     return gic_phandle;
@@ -929,7 +929,7 @@ static void virt_class_init(ObjectClass *oc, void *data)
     mc->name = TYPE_VIRT_MACHINE;
     mc->desc = "ARM Virtual Machine",
     mc->init = machvirt_init;
-    mc->max_cpus = 8;
+    mc->max_cpus = 80;
 }
 
 static const TypeInfo machvirt_info = {
