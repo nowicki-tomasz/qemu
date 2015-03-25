@@ -606,7 +606,7 @@ static int kvm_arm_gicv3_create(GICState *s, SysBusDevice *sbd, Error **errp)
 
     /* Re-Distributor */
     memory_region_init_reservation(&s->rdistiomem, OBJECT(s),
-                                   "kvm-gic_dist", KVM_VGIC_V3_REDIST_SIZE);
+                                   "kvm-gic_dist", KVM_VGIC_V3_REDIST_SIZE * s->num_cpu);
     sysbus_init_mmio(sbd, &s->rdistiomem);
     kvm_arm_register_device(&s->rdistiomem,
                             (KVM_DEV_TYPE_ARM_VGIC_V3 << KVM_ARM_DEVICE_ID_SHIFT)
