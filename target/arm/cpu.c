@@ -633,6 +633,9 @@ static Property arm_cpu_has_el2_property =
 static Property arm_cpu_has_el3_property =
             DEFINE_PROP_BOOL("has_el3", ARMCPU, has_el3, true);
 
+static Property arm_cpu_kvm_nested_virt_property =
+            DEFINE_PROP_BOOL("nested", ARMCPU, kvm_nested_virt, false);
+
 static Property arm_cpu_cfgend_property =
             DEFINE_PROP_BOOL("cfgend", ARMCPU, cfgend, false);
 
@@ -682,6 +685,9 @@ static void arm_cpu_post_init(Object *obj)
 
     if (arm_feature(&cpu->env, ARM_FEATURE_AARCH64)) {
         qdev_property_add_static(DEVICE(obj), &arm_cpu_rvbar_property,
+                                 &error_abort);
+
+        qdev_property_add_static(DEVICE(obj), &arm_cpu_kvm_nested_virt_property,
                                  &error_abort);
     }
 
