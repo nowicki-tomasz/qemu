@@ -754,6 +754,9 @@ struct ARMCPU {
      */
     uint32_t psci_conduit;
 
+    /* KVM emulates virtual EL2 for nested virtualization */
+    bool kvm_nested_virt;
+
     /* For v8M, initial value of the Secure VTOR */
     uint32_t init_svtor;
 

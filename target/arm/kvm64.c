@@ -521,6 +521,11 @@ int kvm_arch_init_vcpu(CPUState *cs)
     if (!kvm_check_extension(cs->kvm_state, KVM_CAP_ARM_PMU_V3)) {
             cpu->has_pmu = false;
     }
+    /* HACK: Should include new Linux headers */
+#define KVM_ARM_VCPU_NESTED_VIRT 4
+    if (cpu->kvm_nested_virt) {
+        cpu->kvm_init_features[0] |= 1 << KVM_ARM_VCPU_NESTED_VIRT;;
+    }
     if (cpu->has_pmu) {
         cpu->kvm_init_features[0] |= 1 << KVM_ARM_VCPU_PMU_V3;
     } else {
