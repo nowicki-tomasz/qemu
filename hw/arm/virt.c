@@ -1329,6 +1329,7 @@ static void machvirt_init(MachineState *machine)
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     bool firmware_loaded = bios_name || drive_get(IF_PFLASH, 0, 0);
     bool aarch64 = true;
+    ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(0));
 
     /* We can probe only here because during property set
      * KVM is not available yet
@@ -1368,7 +1369,9 @@ static void machvirt_init(MachineState *machine)
      * and otherwise we will use HVC (for backwards compatibility and
      * because if we're using KVM then we must use HVC).
      */
-    if (vms->secure && firmware_loaded) {
+    if (armcpu->kvm_nested_virt) {
+        vms->psci_conduit = QEMU_PSCI_CONDUIT_SMC;
+    } else if (vms->secure && firmware_loaded) {
         vms->psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
     } else if (vms->virt) {
         vms->psci_conduit = QEMU_PSCI_CONDUIT_SMC;
