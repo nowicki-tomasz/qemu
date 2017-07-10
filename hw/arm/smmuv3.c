@@ -1113,6 +1113,10 @@ static const MemoryRegionOps smmu_mem_ops = {
         .min_access_size = 4,
         .max_access_size = 8,
     },
+    .impl = {
+        .min_access_size = 4,
+	.max_access_size = 8,
+    },
 };
 
 static void smmu_init_irq(SMMUV3State *s, SysBusDevice *dev)

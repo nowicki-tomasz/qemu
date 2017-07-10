@@ -382,7 +382,8 @@ static inline void smmu_write64_reg(SMMUV3State *s, uint32_t addr, uint64_t val)
 {
     addr >>= 2;
     s->regs[addr] = val & 0xFFFFFFFFULL;
-    s->regs[addr + 1] = val & ~0xFFFFFFFFULL;
+//    s->regs[addr + 1] = val & ~0xFFFFFFFFULL;
+    s->regs[addr + 1] = val >> 32;
 }
 
 static inline void smmu_write_reg(SMMUV3State *s, uint32_t addr, uint64_t val)
@@ -398,7 +399,8 @@ static inline uint32_t smmu_read_reg(SMMUV3State *s, uint32_t addr)
 static inline uint64_t smmu_read64_reg(SMMUV3State *s, uint32_t addr)
 {
     addr >>= 2;
-    return s->regs[addr] | (s->regs[addr + 1] << 32);
+//    return s->regs[addr] | (s->regs[addr + 1] << 32);
+    return (s->regs[addr] & 0xFFFFFFFFULL) | ((s->regs[addr + 1] & 0xFFFFFFFFULL) << 32);
 }
 
 #define smmu_read32_reg smmu_read_reg
