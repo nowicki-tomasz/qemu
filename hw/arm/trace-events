@@ -56,3 +56,9 @@ smmuv3_replay_hook(hwaddr iova, hwaddr pa, hwaddr mask, int perm) "iova=0x%"PRIx
 smmuv3_notify_flag_add(const char *iommu) "ADD SMMUNotifier node for iommu mr=%s"
 smmuv3_notify_flag_del(const char *iommu) "DEL SMMUNotifier node for iommu mr=%s"
 smmuv3_replay_single(const char *name, uint64_t iova, void *n) "iommu mr=%s iova=0x%"PRIx64" n=%p"
+
+smmuv3_iotlb_page_update(hwaddr iova, hwaddr phys_addr, uint32_t sid) "UPDATE: iova:0x%"PRIx64" phys_addr:0x%"PRIx64" SID:0x%x"
+smmuv3_iotlb_page_hit(hwaddr iova, hwaddr phys_addr, uint32_t sid) "HIT: iova:0x%"PRIx64" phys_addr:0x%"PRIx64" SID:0x%x"
+smmuv3_iotlb_page_miss(hwaddr iova, uint32_t sid) "MISS: iova:0x%"PRIx64" SID:0x%x"
+smmuv3_iotlb_inv_all(void) "INV ALL"
+smmuv3_iotlb_inv_one(uint64_t iova, uint32_t sid) "INV: iova:0x%lx SID:0x%x"
