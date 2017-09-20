@@ -581,4 +581,24 @@ static inline int tg2granule(int bits, bool tg1)
 
 #define L1STD_SPAN(stm) (extract32((stm)->word[0], 0, 4))
 
+/*****************************
+ * Hash Table
+ *****************************/
+
+/* Information about page-selective IOTLB invalidate */
+typedef struct SmmuIOTLBPageInvInfo {
+    uint64_t gfn_min;
+    uint64_t gfn_max;
+} SmmuIOTLBPageInvInfo;
+
+static inline gboolean smmu_uint64_equal(gconstpointer v1, gconstpointer v2)
+{
+    return *((const uint64_t *)v1) == *((const uint64_t *)v2);
+}
+
+static inline guint smmu_uint64_hash(gconstpointer v)
+{
+    return (guint)*(const uint64_t *)v;
+}
+
 #endif

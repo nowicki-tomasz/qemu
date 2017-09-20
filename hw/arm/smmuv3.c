@@ -29,6 +29,75 @@
 #include "hw/arm/smmuv3.h"
 #include "smmuv3-internal.h"
 
+static void smmuv3_iotlb_inv_all(SMMUState *s)
+{
+    assert(s->iotlb);
+    g_hash_table_remove_all(s->iotlb);
+}
+
+static gboolean smmuv3_hash_remove_by_page(gpointer key, gpointer value,
+                                        gpointer user_data)
+{
+    SmmuIOTLBEntry *entry = (SmmuIOTLBEntry *)value;
+    SmmuIOTLBPageInvInfo *info = (SmmuIOTLBPageInvInfo *)user_data;
+    hwaddr gfn = entry->gfn;
+    return info->gfn_min <= gfn && gfn <= info->gfn_max ;
+}
+
+static void smmuv3_iotlb_inv_page(SMMUState *s, hwaddr addr, size_t size,
+                                  SMMUTransCfg *cfg)
+{
+    SmmuIOTLBPageInvInfo info;
+
+    info.gfn_min = addr >> cfg->granule_sz;;
+    info.gfn_max = info.gfn_min + (size >> cfg->granule_sz);
+    g_hash_table_foreach_remove(s->iotlb, smmuv3_hash_remove_by_page, &info);
+}
+
+static gboolean smmuv3_hash_remove_by_sid(gpointer key, gpointer value,
+                                        gpointer user_data)
+{
+    SmmuIOTLBEntry *entry = (SmmuIOTLBEntry *)value;
+    uint32_t sid = *(uint32_t *)user_data;
+    return entry->sid == sid;
+}
+
+static void smmuv3_iotlb_inv_sid(SMMUState *s, uint32_t sid)
+{
+    assert(s->iotlb);
+    g_hash_table_foreach_remove(s->iotlb, smmuv3_hash_remove_by_sid, &sid);
+}
+
+static SmmuIOTLBEntry *smmuv3_lookup_iotlb(SMMUV3State *sys, hwaddr addr,
+                                         uint32_t sid, SMMUTransCfg *cfg)
+{
+    SMMUState *s = SMMU_SYS_DEV(sys);
+    uint64_t key = (addr >> cfg->granule_sz) |
+		    ((uint64_t)(sid) << (64 - cfg->granule_sz));
+    return g_hash_table_lookup(s->iotlb, &key);
+}
+
+static void smmuv3_update_iotlb(SMMUV3State *sys, IOMMUTLBEntry *e, hwaddr addr,
+                              uint32_t sid, SMMUTransCfg *cfg)
+{
+    SMMUState *s = SMMU_SYS_DEV(sys);
+    SmmuIOTLBEntry *entry = g_malloc(sizeof(*entry));
+    uint64_t *key = g_malloc(sizeof(*key));
+
+    if (g_hash_table_size(s->iotlb) >= SMMU_IOTLB_MAX_SIZE)
+        smmuv3_iotlb_inv_all(s);
+
+    entry->perms = e->perm;
+    entry->page_mask = e->addr_mask;
+    entry->translated_addr = e->translated_addr & ~e->addr_mask;
+    entry->gfn = addr >> cfg->granule_sz;
+    entry->sid = sid;
+    *key = (addr >> cfg->granule_sz) |
+		    ((uint64_t)(sid) << (64 - cfg->granule_sz));
+    g_hash_table_replace(s->iotlb, key, entry);
+    trace_smmuv3_iotlb_page_update(addr, entry->translated_addr, sid);
+}
+
 /**
  * smmuv3_irq_trigger - pulse @irq if enabled and update
  * GERROR register in case of GERROR interrupt
@@ -298,6 +367,7 @@ static void smmuv3_init(SMMUV3State *s)
 {
     smmuv3_init_regs(s);
     smmuv3_init_queues(s);
+    smmuv3_iotlb_inv_all(&s->smmu_state);
 }
 
 static inline void smmu_update_base_reg(SMMUV3State *s, uint64_t *base,
@@ -620,6 +690,7 @@ static IOMMUTLBEntry smmuv3_translate(IOMMUMemoryRegion *mr, hwaddr addr,
     uint16_t sid = smmu_get_sid(sdev);
     SMMUEvtErr ret;
     SMMUTransCfg cfg = {};
+    SmmuIOTLBEntry *iotlb_entry;
     IOMMUTLBEntry entry = {
         .target_as = &address_space_memory,
         .iova = addr,
@@ -633,9 +704,23 @@ static IOMMUTLBEntry smmuv3_translate(IOMMUMemoryRegion *mr, hwaddr addr,
         goto out;
     }
 
+    iotlb_entry = smmuv3_lookup_iotlb(s, addr, sid, &cfg);
+    if (iotlb_entry && iotlb_entry->perms == flag) {
+        entry.iova = addr;
+        entry.translated_addr = iotlb_entry->translated_addr +
+                                (addr & iotlb_entry->page_mask);
+        entry.addr_mask = iotlb_entry->page_mask;
+        entry.perm = iotlb_entry->perms;
+        trace_smmuv3_iotlb_page_hit(addr, entry.translated_addr, sid);
+        return entry;
+    }
+    trace_smmuv3_iotlb_page_miss(addr, sid);
+
     entry.addr_mask = (1 << cfg.granule_sz) - 1;
 
     ret = smmu_translate(&cfg, &entry);
+    if (!ret)
+        smmuv3_update_iotlb(s, &entry, addr, sid, &cfg);
 
     trace_smmuv3_translate(mr->parent_obj.name, sid, addr,
                            entry.translated_addr, entry.perm, ret);
@@ -672,8 +757,12 @@ static void smmuv3_unmap_notifier_range(IOMMUNotifier *n)
 
 static void smmuv3_replay(IOMMUMemoryRegion *mr, IOMMUNotifier *n)
 {
+    SMMUDevice *sdev = container_of(mr, SMMUDevice, iommu);
+    SMMUV3State *sys = sdev->smmu;
+    SMMUState *s = SMMU_SYS_DEV(sys);
     SMMUTransCfg cfg = {};
     int ret;
+    size_t size;
 
     trace_smmuv3_replay(mr->parent_obj.name, n, n->start, n->end);
     smmuv3_unmap_notifier_range(n);
@@ -687,13 +776,23 @@ static void smmuv3_replay(IOMMUMemoryRegion *mr, IOMMUNotifier *n)
     if (ret || cfg.disabled || cfg.bypassed) {
         return;
     }
+
+    size = MAX(n->end - n->start, 1 << cfg.granule_sz);
+    smmuv3_iotlb_inv_page(s, n->start, size, &cfg);
+
     /* walk the page tables and replay valid entries */
     smmu_page_walk(&cfg, 0, (1ULL << (64 - cfg.tsz)) - 1, false,
                    smmuv3_notify_entry, n);
+
+//    smmuv3_iotlb_inv_one(s, n->start, sid, &cfg);
+//    trace_smmuv3_iotlb_inv_one(iova, sid);
 }
 static void smmuv3_notify_iova_range(IOMMUMemoryRegion *mr, IOMMUNotifier *n,
                                      uint64_t iova, size_t size)
 {
+    SMMUDevice *sdev = container_of(mr, SMMUDevice, iommu);
+    SMMUV3State *sys = sdev->smmu;
+    SMMUState *s = SMMU_SYS_DEV(sys);
     SMMUTransCfg cfg = {};
     IOMMUTLBEntry entry;
     int ret;
@@ -718,6 +817,7 @@ static void smmuv3_notify_iova_range(IOMMUMemoryRegion *mr, IOMMUNotifier *n,
     entry.perm = IOMMU_NONE;
 
     memory_region_notify_one(n, &entry);
+    smmuv3_iotlb_inv_page(s, iova, size, &cfg);
 
     /* then figure out if a new mapping needs to be applied */
     smmu_page_walk(&cfg, iova, iova + entry.addr_mask , false,
@@ -735,6 +835,9 @@ static void smmuv3_replay_all(SMMUState *s)
         trace_smmuv3_replay_mr(node->sdev->iommu.parent_obj.name);
         memory_region_iommu_replay_all(&node->sdev->iommu);
     }
+
+    smmuv3_iotlb_inv_all(s);
+    trace_smmuv3_iotlb_inv_all();
 }
 
 /*
@@ -756,6 +859,7 @@ static void smmuv3_replay_sid(SMMUState *s, uint16_t sid)
             memory_region_iommu_replay_all(&smmu->iommu);
         }
     }
+    smmuv3_iotlb_inv_sid(s, sid);
 }
 
 static void smmuv3_replay_iova_range(SMMUState *s, uint64_t iova, size_t size)
@@ -1077,6 +1181,8 @@ static void smmu_realize(DeviceState *d, Error **errp)
                           &smmu_mem_ops, sys, TYPE_SMMU_V3_DEV, 0x20000);
 
     sys->mrtypename = g_strdup(TYPE_SMMUV3_IOMMU_MEMORY_REGION);
+    sys->iotlb = g_hash_table_new_full(smmu_uint64_hash, smmu_uint64_equal,
+                                       g_free, g_free);
 
     sysbus_init_mmio(dev, &sys->iomem);
 

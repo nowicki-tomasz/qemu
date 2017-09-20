@@ -84,12 +84,22 @@ typedef struct SMMUState {
     SysBusDevice  dev;
     char *mrtypename;
     MemoryRegion iomem;
+#define SMMU_IOTLB_MAX_SIZE          1024    /* Max size of the hash table */
+    GHashTable *iotlb; /* IOTLB */
 
     GHashTable *smmu_as_by_busptr;
     SMMUPciBus *smmu_as_by_bus_num[SMMU_PCI_BUS_MAX];
     QLIST_HEAD(, SMMUNotifierNode) notifiers_list;
 
 } SMMUState;
+
+typedef struct SmmuIOTLBEntry {
+    hwaddr           translated_addr;
+    uint64_t         gfn;
+    hwaddr           page_mask;
+    IOMMUAccessFlags perms;
+    uint32_t         sid;
+} SmmuIOTLBEntry;
 
 typedef int (*smmu_page_walk_hook)(IOMMUTLBEntry *entry, void *private);
 
