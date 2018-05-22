@@ -37,4 +37,7 @@ uint64_t vhost_net_get_acked_features(VHostNetState *net);
 
 int vhost_net_set_mtu(struct vhost_net *net, uint16_t mtu);
 
+int vhost_net_iommu_register_dev(VirtIODevice *dev, NetClientState *ncs,
+                                  int total_queues);
+
 #endif

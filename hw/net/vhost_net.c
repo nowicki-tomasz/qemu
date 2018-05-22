@@ -19,6 +19,8 @@
 #include "net/vhost-user.h"
 
 #include "hw/virtio/virtio-net.h"
+#include "hw/virtio/virtio-iommu.h"
+#include "hw/virtio/vhost-iommu.h"
 #include "net/vhost_net.h"
 #include "qemu/error-report.h"
 
@@ -450,6 +452,25 @@ int vhost_net_set_mtu(struct vhost_net *net, uint16_t mtu)
     return vhost_ops->vhost_net_set_mtu(&net->dev, mtu);
 }
 
+int vhost_net_iommu_register_dev(VirtIODevice *dev, NetClientState *ncs,
+                                  int total_queues)
+{
+    int i;
+
+    if (!get_vhost_net(ncs[0].peer)) {
+        return 0;
+    }
+
+    for (i = 0; i < total_queues; i++) {
+        struct vhost_net *net;
+
+        net = get_vhost_net(ncs[i].peer);
+        vhost_iommu_register_dev(&net->dev, dev);
+    }
+
+    return 0;
+}
+
 #else
 uint64_t vhost_net_get_max_queues(VHostNetState *net)
 {
@@ -518,6 +539,12 @@ int vhost_set_vring_enable(NetClientState *nc, int enable)
 }
 
 int vhost_net_set_mtu(struct vhost_net *net, uint16_t mtu)
+{
+    return 0;
+}
+
+int vhost_net_iommu_register_dev(VirtIODevice *dev, NetClientState *ncs,
+                                  int total_queues)
 {
     return 0;
 }

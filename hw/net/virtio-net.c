@@ -2041,6 +2041,8 @@ static void virtio_net_device_realize(DeviceState *dev, Error **errp)
     nc->rxfilter_notify_enabled = 1;
 
     n->qdev = dev;
+    vhost_net_iommu_register_dev(VIRTIO_DEVICE(dev), n->nic->ncs,
+                                  n->multiqueue ? n->max_queues : 1);
 }
 
 static void virtio_net_device_unrealize(DeviceState *dev, Error **errp)
