@@ -61,6 +61,7 @@
 #include "standard-headers/linux/input.h"
 #include "hw/arm/smmuv3.h"
 #include "hw/virtio/virtio-iommu.h"
+#include "hw/virtio/vhost-iommu.h"
 
 #define DEFINE_VIRT_MACHINE_LATEST(major, minor, latest) \
     static void virt_##major##_##minor##_class_init(ObjectClass *oc, \
@@ -1065,7 +1066,8 @@ static void create_virtio_iommu(VirtMachineState *vms, qemu_irq *pic,
     sysbus_create_simple("virtio-mmio", base, pic[irq]);
 
     virtio_bus = qbus_find_recursive(sysbus_get_default(), NULL, "virtio-bus");
-    dev = DEVICE(object_new("virtio-iommu-device"));
+    dev = DEVICE(object_new(vms->iommu == VIRT_IOMMU_VHOST ?
+                            "vhost-iommu-device" : "virtio-iommu-device"));
     qdev_set_parent_bus(dev, virtio_bus);
     object_property_set_link(OBJECT(dev), OBJECT(bus), "primary-bus",
                              &error_abort);
@@ -1212,6 +1214,7 @@ static void create_pcie(VirtMachineState *vms, qemu_irq *pic)
             create_smmu(vms, pic, pci->bus);
             break;
         case VIRT_IOMMU_VIRTIO:
+        case VIRT_IOMMU_VHOST:
             create_virtio_iommu(vms, pic, pci->bus);
             break;
         default:
@@ -1681,6 +1684,8 @@ static char *virt_get_iommu(Object *obj, Error **errp)
         return g_strdup("smmuv3");
     case VIRT_IOMMU_VIRTIO:
         return g_strdup("virtio");
+    case VIRT_IOMMU_VHOST:
+        return g_strdup("vhost");
     default:
         g_assert_not_reached();
     }
@@ -1694,6 +1699,8 @@ static void virt_set_iommu(Object *obj, const char *value, Error **errp)
         vms->iommu = VIRT_IOMMU_SMMUV3;
     } else if (!strcmp(value, "virtio")) {
         vms->iommu = VIRT_IOMMU_VIRTIO;
+    } else if (!strcmp(value, "vhost")) {
+        vms->iommu = VIRT_IOMMU_VHOST;
     } else if (!strcmp(value, "none")) {
         vms->iommu = VIRT_IOMMU_NONE;
     } else {

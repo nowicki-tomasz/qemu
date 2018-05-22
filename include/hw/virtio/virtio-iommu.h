@@ -35,6 +35,7 @@
 
 typedef enum OutputFormat {
     VIRTIO_IOMMU,
+    VHOST_IOMMU,
 } IOMMUType;
 
 typedef struct IOMMUDevice {

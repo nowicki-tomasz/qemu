@@ -85,6 +85,7 @@ typedef enum VirtIOMMUType {
     VIRT_IOMMU_NONE,
     VIRT_IOMMU_SMMUV3,
     VIRT_IOMMU_VIRTIO,
+    VIRT_IOMMU_VHOST,
 } VirtIOMMUType;
 
 typedef struct MemMapEntry {

@@ -233,6 +233,23 @@ static void vhost_kernel_set_iotlb_callback(struct vhost_dev *dev,
         qemu_set_fd_handler((uintptr_t)dev->opaque, NULL, NULL, NULL);
 }
 
+static int vhost_kernel_iommu_set_config(struct vhost_dev *dev,
+                                         struct virtio_iommu_config *cfg)
+{
+    return vhost_kernel_call(dev, VHOST_IOMMU_CONFIG, cfg);
+}
+
+static int vhost_kernel_iommu_set_id(struct vhost_dev *dev, uint32_t *id)
+{
+    return vhost_kernel_call(dev, VHOST_IOMMU_ID, id);
+}
+
+static int vhost_kernel_iommu_xlate(struct vhost_dev *dev,
+                                    struct vhost_iommu_xlate *xlate)
+{
+    return vhost_kernel_call(dev, VHOST_IOMMU_XLATE, xlate);
+}
+
 static const VhostOps kernel_ops = {
         .backend_type = VHOST_BACKEND_TYPE_KERNEL,
         .vhost_backend_init = vhost_kernel_init,
@@ -264,6 +281,9 @@ static const VhostOps kernel_ops = {
 #endif /* CONFIG_VHOST_VSOCK */
         .vhost_set_iotlb_callback = vhost_kernel_set_iotlb_callback,
         .vhost_send_device_iotlb_msg = vhost_kernel_send_device_iotlb_msg,
+        .vhost_iommu_set_id = vhost_kernel_iommu_set_id,
+        .vhost_iommu_set_config = vhost_kernel_iommu_set_config,
+        .vhost_iommu_xlate = vhost_kernel_iommu_xlate,
 };
 
 int vhost_set_backend_type(struct vhost_dev *dev, VhostBackendType backend_type)
@@ -283,6 +303,41 @@ int vhost_set_backend_type(struct vhost_dev *dev, VhostBackendType backend_type)
     }
 
     return r;
+}
+
+int vhost_backend_iommu_xlate(struct vhost_dev *dev, uint64_t iova,
+                              IOMMUAccessFlags perm, uint64_t *xlat,
+                              uint32_t devid)
+{
+    struct vhost_iommu_xlate xlate;
+    int r;
+
+    xlate.imsg.iova =  iova;
+    xlate.devid = devid;
+
+    switch (perm) {
+    case IOMMU_RO:
+        xlate.imsg.perm = VHOST_ACCESS_RO;
+        break;
+    case IOMMU_WO:
+        xlate.imsg.perm = VHOST_ACCESS_WO;
+        break;
+    case IOMMU_RW:
+        xlate.imsg.perm = VHOST_ACCESS_RW;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    if (!dev->vhost_ops || !dev->vhost_ops->vhost_iommu_xlate)
+        return -ENODEV;
+
+    r = dev->vhost_ops->vhost_iommu_xlate(dev, &xlate);
+    if (r < 0)
+        return -errno;
+
+    *xlat = xlate.imsg.uaddr;
+    return 0;
 }
 
 int vhost_backend_update_device_iotlb(struct vhost_dev *dev,
