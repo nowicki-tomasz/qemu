@@ -207,4 +207,19 @@ struct vhost_scsi_target {
 #define VHOST_VSOCK_SET_GUEST_CID	_IOW(VHOST_VIRTIO, 0x60, __u64)
 #define VHOST_VSOCK_SET_RUNNING		_IOW(VHOST_VIRTIO, 0x61, int)
 
+struct vhost_iommu_bind {
+    uint32_t                    dev_fd;
+    uint32_t                    iommu_fd;
+    uint32_t                    devid;
+};
+
+struct vhost_iommu_xlate {
+    struct vhost_iotlb_msg      imsg;
+    uint32_t                    devid;
+};
+
+#define VHOST_IOMMU_ID          _IOW(VHOST_VIRTIO, 0x80, __u32)
+#define VHOST_IOMMU_CONFIG      _IOW(VHOST_VIRTIO, 0x81, __u32)
+#define VHOST_IOMMU_XLATE       _IOWR(VHOST_VIRTIO, 0x83, __u32)
+
 #endif

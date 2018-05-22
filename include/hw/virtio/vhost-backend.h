@@ -33,6 +33,8 @@ struct vhost_vring_state;
 struct vhost_vring_addr;
 struct vhost_scsi_target;
 struct vhost_iotlb_msg;
+struct virtio_iommu_config;
+struct vhost_iommu_xlate;
 
 typedef int (*vhost_backend_init)(struct vhost_dev *dev, void *opaque);
 typedef int (*vhost_backend_cleanup)(struct vhost_dev *dev);
@@ -95,6 +97,12 @@ typedef int (*vhost_set_config_op)(struct vhost_dev *dev, const uint8_t *data,
 typedef int (*vhost_get_config_op)(struct vhost_dev *dev, uint8_t *config,
                                    uint32_t config_len);
 
+typedef int (*vhost_iommu_set_config_op)(struct vhost_dev *dev,
+                                         struct virtio_iommu_config *cfg);
+typedef int (*vhost_iommu_set_id_op)(struct vhost_dev *dev, uint32_t *id);
+typedef int (*vhost_iommu_xlate_op)(struct vhost_dev *dev,
+                                    struct vhost_iommu_xlate *xlate);
+
 typedef struct VhostOps {
     VhostBackendType backend_type;
     vhost_backend_init vhost_backend_init;
@@ -130,6 +138,9 @@ typedef struct VhostOps {
     vhost_send_device_iotlb_msg_op vhost_send_device_iotlb_msg;
     vhost_get_config_op vhost_get_config;
     vhost_set_config_op vhost_set_config;
+    vhost_iommu_set_config_op vhost_iommu_set_config;
+    vhost_iommu_set_id_op vhost_iommu_set_id;
+    vhost_iommu_xlate_op vhost_iommu_xlate;
 } VhostOps;
 
 extern const VhostOps user_ops;
@@ -141,6 +152,10 @@ int vhost_backend_update_device_iotlb(struct vhost_dev *dev,
                                              uint64_t iova, uint64_t uaddr,
                                              uint64_t len,
                                              IOMMUAccessFlags perm);
+
+int vhost_backend_iommu_xlate(struct vhost_dev *dev, uint64_t iova,
+                              IOMMUAccessFlags perm, uint64_t *uaddr,
+                              uint32_t devid);
 
 int vhost_backend_invalidate_device_iotlb(struct vhost_dev *dev,
                                                  uint64_t iova, uint64_t len);

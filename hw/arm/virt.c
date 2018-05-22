@@ -55,6 +55,7 @@
 #include "hw/intc/arm_gic.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "hw/virtio/virtio-iommu.h"
+#include "hw/virtio/vhost-iommu.h"
 #include "kvm_arm.h"
 #include "hw/smbios/smbios.h"
 #include "qapi/visitor.h"
@@ -951,12 +952,15 @@ static void virtio_iommu_notifier(Notifier *notifier, void *data)
     VirtMachineClass *vmc = VIRT_MACHINE_GET_CLASS(vms);
     struct arm_boot_info *info = &vms->bootinfo;
     bool ambiguous;
-    Object *obj = object_resolve_path_type("", TYPE_VIRTIO_IOMMU, &ambiguous);
+    Object *obj;
     int dtb_size;
     void *fdt = info->get_dtb(info, &dtb_size);
 
+    obj = object_resolve_path_type("", TYPE_VIRTIO_IOMMU, &ambiguous);
     if (!obj) {
-        return;
+        obj = object_resolve_path_type("", TYPE_VHOST_IOMMU, &ambiguous);
+        if (!obj)
+            return;
     }
 
     if (vmc->no_iommu) {
