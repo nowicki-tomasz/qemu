@@ -1546,6 +1546,19 @@ void vhost_dev_set_config_notifier(struct vhost_dev *hdev,
     hdev->config_ops = ops;
 }
 
+static bool vhost_dev_has_virtio_iommu(struct vhost_dev *hdev, VirtIODevice *dev)
+{
+    BusState *qbus = BUS(qdev_get_parent_bus(DEVICE(dev)));
+    VirtioBusState *vbus = VIRTIO_BUS(qbus);
+    VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(vbus);
+
+    if (!k->get_iommu_type) {
+        return false;
+    }
+
+    return k->get_iommu_type(qbus->parent, hdev) == VIRTIO_IOMMU;
+}
+
 /* Host notifiers must be enabled at this point. */
 int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
 {
@@ -1562,7 +1575,7 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
         goto fail_features;
     }
 
-    if (vhost_dev_has_iommu(hdev)) {
+    if (vhost_dev_has_iommu(hdev) && vhost_dev_has_virtio_iommu(hdev, vdev)) {
         memory_listener_register(&hdev->iommu_listener, vdev->dma_as);
     }
 
@@ -1599,7 +1612,7 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
         }
     }
 
-    if (vhost_dev_has_iommu(hdev)) {
+    if (vhost_dev_has_iommu(hdev) && vhost_dev_has_virtio_iommu(hdev, vdev)) {
         hdev->vhost_ops->vhost_set_iotlb_callback(hdev, true);
 
         /* Update used ring information for IOTLB to work correctly,
@@ -1643,7 +1656,7 @@ void vhost_dev_stop(struct vhost_dev *hdev, VirtIODevice *vdev)
                              hdev->vq_index + i);
     }
 
-    if (vhost_dev_has_iommu(hdev)) {
+    if (vhost_dev_has_iommu(hdev) && vhost_dev_has_virtio_iommu(hdev, vdev)) {
         hdev->vhost_ops->vhost_set_iotlb_callback(hdev, false);
         memory_listener_unregister(&hdev->iommu_listener);
     }

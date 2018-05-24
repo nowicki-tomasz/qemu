@@ -290,6 +290,7 @@ static AddressSpace *virtio_iommu_find_add_as(PCIBus *bus, void *opaque,
         sdev->viommu = s;
         sdev->bus = bus;
         sdev->devfn = devfn;
+        sdev->type = VIRTIO_IOMMU;
 
         virtio_iommu_get_endpoint(s, PCI_BUILD_BDF(pci_bus_num(bus), devfn));
 
