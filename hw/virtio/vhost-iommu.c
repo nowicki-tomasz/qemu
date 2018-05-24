@@ -327,7 +327,8 @@ static void vhost_iommu_device_realize(DeviceState *dev, Error **errp)
     s->req_vq = virtio_add_queue(vdev, VIOMMU_DEFAULT_QUEUE_SIZE, vhost_dummy_handle_comman);
     s->event_vq = virtio_add_queue(vdev, VIOMMU_DEFAULT_QUEUE_SIZE, NULL);
 
-    s->config.page_size_mask = TARGET_PAGE_MASK;
+#define TARGET_64K_PAGE_MASK    0xffffffffffff0000UL
+    s->config.page_size_mask = TARGET_64K_PAGE_MASK;
     s->config.input_range.end = -1UL;
     s->config.probe_size = VIOMMU_PROBE_SIZE;
 
