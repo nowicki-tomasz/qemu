@@ -34,6 +34,7 @@ struct vhost_vring_addr;
 struct vhost_scsi_target;
 struct vhost_iotlb_msg;
 struct virtio_iommu_config;
+struct vhost_iommu_bind;
 struct vhost_iommu_xlate;
 
 typedef int (*vhost_backend_init)(struct vhost_dev *dev, void *opaque);
@@ -105,6 +106,8 @@ typedef int (*vhost_crypto_close_session_op)(struct vhost_dev *dev,
 typedef int (*vhost_iommu_set_config_op)(struct vhost_dev *dev,
                                          struct virtio_iommu_config *cfg);
 typedef int (*vhost_iommu_set_id_op)(struct vhost_dev *dev, uint32_t *id);
+typedef int (*vhost_iommu_attach_dev_op)(struct vhost_dev *dev,
+                                         struct vhost_iommu_bind *bind);
 typedef int (*vhost_iommu_xlate_op)(struct vhost_dev *dev,
                                     struct vhost_iommu_xlate *xlate);
 
@@ -151,6 +154,7 @@ typedef struct VhostOps {
     vhost_backend_mem_section_filter_op vhost_backend_mem_section_filter;
     vhost_iommu_set_config_op vhost_iommu_set_config;
     vhost_iommu_set_id_op vhost_iommu_set_id;
+    vhost_iommu_attach_dev_op vhost_iommu_attach_dev;
     vhost_iommu_xlate_op vhost_iommu_xlate;
 } VhostOps;
 

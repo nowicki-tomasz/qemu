@@ -1483,6 +1483,19 @@ void vhost_dev_set_config_notifier(struct vhost_dev *hdev,
     hdev->config_ops = ops;
 }
 
+int vhost_iommu_register_dev(struct vhost_dev *hdev, VirtIODevice *dev)
+{
+    BusState *qbus = BUS(qdev_get_parent_bus(DEVICE(dev)));
+    VirtioBusState *vbus = VIRTIO_BUS(qbus);
+    VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(vbus);
+
+    if (!k->iommu_register_vhost_dev) {
+        return 0;
+    }
+
+    return k->iommu_register_vhost_dev(qbus->parent, hdev);
+}
+
 static bool vhost_dev_has_virtio_iommu(struct vhost_dev *hdev, VirtIODevice *dev)
 {
     BusState *qbus = BUS(qdev_get_parent_bus(DEVICE(dev)));
