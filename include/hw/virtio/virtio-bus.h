@@ -25,6 +25,10 @@
 #ifndef VIRTIO_BUS_H
 #define VIRTIO_BUS_H
 
+#include <linux/vhost.h>
+#include "hw/virtio/virtio-iommu.h"
+#include "hw/virtio/vhost.h"
+#include "hw/virtio/vhost-iommu.h"
 #include "hw/qdev.h"
 #include "sysemu/sysemu.h"
 #include "hw/virtio/virtio.h"
@@ -52,6 +56,7 @@ typedef struct VirtioBusClass {
     bool (*has_extra_state)(DeviceState *d);
     bool (*query_guest_notifiers)(DeviceState *d);
     int (*set_guest_notifiers)(DeviceState *d, int nvqs, bool assign);
+    int (*iommu_register_vhost_dev)(DeviceState *d, struct vhost_dev *hdev);
     IOMMUType (*get_iommu_type)(DeviceState *d, struct vhost_dev *hdev);
     void (*vmstate_change)(DeviceState *d, bool running);
     /*

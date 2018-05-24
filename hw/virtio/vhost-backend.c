@@ -244,6 +244,12 @@ static int vhost_kernel_iommu_set_id(struct vhost_dev *dev, uint32_t *id)
     return vhost_kernel_call(dev, VHOST_IOMMU_ID, id);
 }
 
+static int vhost_dekrnel_iommu_attach_dev(struct vhost_dev *dev,
+                                          struct vhost_iommu_bind *bind)
+{
+    return vhost_kernel_call(dev, VHOST_IOMMU_ATTACH_DEV, bind);
+}
+
 static int vhost_kernel_iommu_xlate(struct vhost_dev *dev,
                                     struct vhost_iommu_xlate *xlate)
 {
@@ -283,6 +289,7 @@ static const VhostOps kernel_ops = {
         .vhost_send_device_iotlb_msg = vhost_kernel_send_device_iotlb_msg,
         .vhost_iommu_set_id = vhost_kernel_iommu_set_id,
         .vhost_iommu_set_config = vhost_kernel_iommu_set_config,
+        .vhost_iommu_attach_dev = vhost_dekrnel_iommu_attach_dev,
         .vhost_iommu_xlate = vhost_kernel_iommu_xlate,
 };
 

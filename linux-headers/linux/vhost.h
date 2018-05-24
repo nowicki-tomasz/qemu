@@ -220,6 +220,7 @@ struct vhost_iommu_xlate {
 
 #define VHOST_IOMMU_ID          _IOW(VHOST_VIRTIO, 0x80, __u32)
 #define VHOST_IOMMU_CONFIG      _IOW(VHOST_VIRTIO, 0x81, __u32)
+#define VHOST_IOMMU_ATTACH_DEV  _IOW(VHOST_VIRTIO, 0x82, __u32)
 #define VHOST_IOMMU_XLATE       _IOWR(VHOST_VIRTIO, 0x83, __u32)
 
 #endif

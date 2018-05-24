@@ -25,6 +25,7 @@
 #include "hw/virtio/virtio-scsi.h"
 #include "hw/virtio/virtio-balloon.h"
 #include "hw/virtio/virtio-input.h"
+#include "hw/virtio/vhost.h"
 #include "hw/pci/pci.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
@@ -1035,6 +1036,37 @@ assign_error:
         virtio_pci_set_guest_notifier(d, n, !assign, with_irqfd);
     }
     return r;
+}
+
+static int virtio_pci_iommu_register_vhost_dev(DeviceState *d, struct vhost_dev *hdev)
+{
+    VirtIOPCIProxy *proxy = to_virtio_pci_proxy(d);
+    AddressSpace *as = pci_device_iommu_address_space(&proxy->pci_dev);
+    const VhostOps *vhost_ops = hdev->vhost_ops;
+    struct vhost_iommu_bind bind;
+    IOMMUDevice *sdev;
+    VhostIOMMU *s;
+    int ret;
+
+    if (as == &address_space_memory) {
+        return 0;
+    }
+
+    sdev = container_of(as, IOMMUDevice, as);
+    if (sdev->type != VHOST_IOMMU)
+        return 0;
+
+    s = sdev->viommu;
+    bind.iommu_fd = (uint32_t)(uintptr_t)s->dev.opaque;
+    bind.dev_fd = (uint32_t)(uintptr_t)hdev->opaque;
+    bind.devid = PCI_BUILD_BDF(pci_bus_num(sdev->bus), sdev->devfn);
+
+    ret = vhost_ops->vhost_iommu_attach_dev(hdev, &bind);
+    if (ret < 0) {
+        error_report("%s: vhost_iommu_attach_dev failed", __func__);
+        return -errno;
+    }
+    return 0;
 }
 
 static IOMMUType virtio_pci_get_iommu_type(DeviceState *d, struct vhost_dev *hdev)
@@ -2652,6 +2684,7 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     k->has_extra_state = virtio_pci_has_extra_state;
     k->query_guest_notifiers = virtio_pci_query_guest_notifiers;
     k->set_guest_notifiers = virtio_pci_set_guest_notifiers;
+    k->iommu_register_vhost_dev = virtio_pci_iommu_register_vhost_dev;
     k->get_iommu_type = virtio_pci_get_iommu_type;
     k->vmstate_change = virtio_pci_vmstate_change;
     k->pre_plugged = virtio_pci_pre_plugged;
