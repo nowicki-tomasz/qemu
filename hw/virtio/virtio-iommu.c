@@ -290,6 +290,7 @@ static AddressSpace *virtio_iommu_find_add_as(PCIBus *bus, void *opaque,
         sdev->viommu = s;
         sdev->bus = bus;
         sdev->devfn = devfn;
+        sdev->type = VIRTIO_IOMMU;
 
         trace_virtio_iommu_init_iommu_mr(name);
 

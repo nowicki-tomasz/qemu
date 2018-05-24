@@ -1036,6 +1036,16 @@ assign_error:
     return r;
 }
 
+static IOMMUType virtio_pci_get_iommu_type(DeviceState *d, struct vhost_dev *hdev)
+{
+    VirtIOPCIProxy *proxy = to_virtio_pci_proxy(d);
+    AddressSpace *as = pci_device_iommu_address_space(&proxy->pci_dev);
+    IOMMUDevice *sdev;
+
+    sdev = container_of(as, IOMMUDevice, as);
+    return sdev->type;
+}
+
 static int virtio_pci_set_host_notifier_mr(DeviceState *d, int n,
                                            MemoryRegion *mr, bool assign)
 {
@@ -2673,6 +2683,7 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     k->query_guest_notifiers = virtio_pci_query_guest_notifiers;
     k->set_guest_notifiers = virtio_pci_set_guest_notifiers;
     k->set_host_notifier_mr = virtio_pci_set_host_notifier_mr;
+    k->get_iommu_type = virtio_pci_get_iommu_type;
     k->vmstate_change = virtio_pci_vmstate_change;
     k->pre_plugged = virtio_pci_pre_plugged;
     k->device_plugged = virtio_pci_device_plugged;

@@ -33,12 +33,17 @@
 #define IOMMU_PCI_BUS_MAX      256
 #define IOMMU_PCI_DEVFN_MAX    256
 
+typedef enum OutputFormat {
+    VIRTIO_IOMMU,
+} IOMMUType;
+
 typedef struct IOMMUDevice {
     void         *viommu;
     PCIBus       *bus;
     int           devfn;
     IOMMUMemoryRegion  iommu_mr;
     AddressSpace  as;
+    IOMMUType     type;
 } IOMMUDevice;
 
 typedef struct IOMMUPciBus {
