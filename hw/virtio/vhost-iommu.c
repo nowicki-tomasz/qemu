@@ -373,6 +373,7 @@ static const QEnumLookup IommuPgtfMap = {
     .array = (const char *const[]) {
         [IOMMU_PGTF_NONE] = "none",
         [IOMMU_PGTF_ARM_LPAE] = "arm-lpae",
+        [IOMMU_PGTF_ARM_LPAE_CUVI] = "arm-lpae-cuvi",
     },
     .size = IOMMU_LAST
 };

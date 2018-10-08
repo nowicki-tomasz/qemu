@@ -115,6 +115,7 @@ typedef struct {
     bool virt;
     int32_t gic_version;
     VirtIOMMUType iommu;
+    char *iommu_ptf;
     struct arm_boot_info bootinfo;
     const MemMapEntry *memmap;
     const int *irqmap;

@@ -36,6 +36,7 @@ typedef enum IommuPgtf IommuPgtf;
 enum IommuPgtf {
 	IOMMU_PGTF_NONE,
 	IOMMU_PGTF_ARM_LPAE,
+	IOMMU_PGTF_ARM_LPAE_CUVI,
 
 	IOMMU_LAST,
 };

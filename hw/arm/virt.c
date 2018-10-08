@@ -1073,6 +1073,11 @@ static void create_virtio_iommu(VirtMachineState *vms, qemu_irq *pic,
                              &error_abort);
     object_property_set_bool(OBJECT(dev), false, "msi_bypass", &error_fatal);
     object_property_set_bool(OBJECT(dev), true, "realized", &error_abort);
+    if (vms->iommu == VIRT_IOMMU_VHOST) {
+	    char *str = object_property_get_str(OBJECT(vms), "iommu-ptf", NULL);
+	    if (str && *str)
+		    object_property_parse(OBJECT(dev), str, "pt", &error_fatal);
+    }
 
     node = g_strdup_printf("/virtio_mmio@%" PRIx64, base);
     qemu_fdt_add_subnode(vms->fdt, node);
@@ -1709,6 +1714,20 @@ static void virt_set_iommu(Object *obj, const char *value, Error **errp)
     }
 }
 
+static char *virt_get_iommu_ptf(Object *obj, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+
+    return vms->iommu_ptf;
+}
+
+static void virt_set_iommu_ptf(Object *obj, const char *value, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+
+    vms->iommu_ptf = g_strdup(value);
+}
+
 static CpuInstanceProperties
 virt_cpu_index_to_props(MachineState *ms, unsigned cpu_index)
 {
@@ -1885,6 +1904,13 @@ static void virt_3_0_instance_init(Object *obj)
                                     "Set the IOMMU type. "
                                     "Valid values are none, smmuv3, virtio",
                                     NULL);
+
+    vms->iommu_ptf = NULL;
+    object_property_add_str(obj, "iommu-ptf", virt_get_iommu_ptf,
+                            virt_set_iommu_ptf, NULL);
+    object_property_set_description(obj, "iommu-ptf",
+                                    "Indicates IOMMU page descriptor format."
+                                    "Default is map tree", NULL);
 
     vms->memmap = a15memmap;
     vms->irqmap = a15irqmap;
