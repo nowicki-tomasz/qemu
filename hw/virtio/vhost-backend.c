@@ -234,7 +234,7 @@ static void vhost_kernel_set_iotlb_callback(struct vhost_dev *dev,
 }
 
 static int vhost_kernel_iommu_set_config(struct vhost_dev *dev,
-                                         struct virtio_iommu_config *cfg)
+                                         struct vhost_iommu_config *cfg)
 {
     return vhost_kernel_call(dev, VHOST_IOMMU_CONFIG, cfg);
 }

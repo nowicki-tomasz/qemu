@@ -15,6 +15,7 @@
 
 #include <linux/ioctl.h>
 #include <linux/virtio_config.h>
+#include <linux/virtio_iommu.h>
 #include <linux/virtio_ring.h>
 
 struct vhost_vring_state {
@@ -216,6 +217,11 @@ struct vhost_iommu_bind {
 struct vhost_iommu_xlate {
     struct vhost_iotlb_msg      imsg;
     uint32_t                    devid;
+};
+
+struct vhost_iommu_config {
+    struct virtio_iommu_config  config;
+    uint32_t                    pgtf;
 };
 
 #define VHOST_IOMMU_ID          _IOW(VHOST_VIRTIO, 0x80, __u32)

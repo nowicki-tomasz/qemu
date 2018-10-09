@@ -142,6 +142,7 @@ static uint64_t vhost_iommu_get_features(VirtIODevice *vdev, uint64_t f,
     virtio_add_feature(&f, VIRTIO_IOMMU_F_INPUT_RANGE);
     virtio_add_feature(&f, VIRTIO_IOMMU_F_MAP_UNMAP);
     virtio_add_feature(&f, VIRTIO_IOMMU_F_PROBE);
+    virtio_add_feature(&f, VIRTIO_IOMMU_F_ATTACH_TABLE);
     return f;
 }
 
@@ -203,11 +204,12 @@ err_host_notifiers:
 static int vhost_iommu_sync_config(VhostIOMMU *s)
 {
     const VhostOps *vhost_ops = s->dev.vhost_ops;
-    struct virtio_iommu_config config;
+    struct vhost_iommu_config config;
     int ret;
 
     memset(&config, 0, sizeof(config));
-    memcpy(&config, &s->config, sizeof(config));
+    memcpy(&config.config, &s->config, sizeof(s->config));
+    config.pgtf = s->pgtf;
     ret = vhost_ops->vhost_iommu_set_config(&s->dev, &config);
     if (ret < 0) {
         return -errno;
@@ -367,6 +369,29 @@ static void vhost_iommu_set_msi_bypass(Object *obj, bool value, Error **errp)
     s->msi_bypass = value;
 }
 
+static const QEnumLookup IommuPgtfMap = {
+    .array = (const char *const[]) {
+        [IOMMU_PGTF_NONE] = "none",
+        [IOMMU_PGTF_ARM_LPAE] = "arm-lpae",
+    },
+    .size = IOMMU_LAST
+};
+
+static int vhost_iommu_get_pt(Object *obj, Error **errp)
+{
+    VhostIOMMU *s = VHOST_IOMMU(obj);
+
+    return s->pgtf;
+}
+
+
+static void vhost_iommu_set_pt(Object *obj, int value, Error **errp)
+{
+    VhostIOMMU *s = VHOST_IOMMU(obj);
+
+    s->pgtf = value;
+}
+
 static void vhost_iommu_instance_init(Object *obj)
 {
     VhostIOMMU *s = VHOST_IOMMU(obj);
@@ -379,6 +404,13 @@ static void vhost_iommu_instance_init(Object *obj)
                                     NULL);
 
     s->msi_bypass = true;
+
+    object_property_add_enum(obj, "pt", "IommuPgtf", &IommuPgtfMap,
+                             vhost_iommu_get_pt, vhost_iommu_set_pt, NULL);
+    object_property_set_description(obj, "pt",
+                                    "Indicates page descriptor format."
+                                    "Default is map tree", NULL);
+    s->pgtf = IOMMU_PGTF_NONE;
 }
 
 static int vhost_iommu_post_load_device(void *opaque, int version_id)

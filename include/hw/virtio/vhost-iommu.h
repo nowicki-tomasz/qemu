@@ -31,6 +31,15 @@
 
 #define TYPE_VHOST_IOMMU_MEMORY_REGION "vhost-iommu-memory-region"
 
+typedef enum IommuPgtf IommuPgtf;
+
+enum IommuPgtf {
+	IOMMU_PGTF_NONE,
+	IOMMU_PGTF_ARM_LPAE,
+
+	IOMMU_LAST,
+};
+
 typedef struct VhostIOMMU {
     VirtIODevice parent_obj;
     VirtQueue *req_vq;
@@ -43,6 +52,7 @@ typedef struct VhostIOMMU {
     struct vhost_dev dev;
     struct vhost_virtqueue vqs;
     bool msi_bypass;
+    IommuPgtf pgtf;
 } VhostIOMMU;
 
 #endif
