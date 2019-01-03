@@ -400,6 +400,7 @@ static void fdt_add_v2m_gic_node(VirtMachineState *vms)
 
 static void fdt_add_gic_node(VirtMachineState *vms)
 {
+    ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(0));
     char *nodename;
 
     vms->gic_phandle = qemu_fdt_alloc_phandle(vms->fdt);
@@ -438,7 +439,7 @@ static void fdt_add_gic_node(VirtMachineState *vms)
                                          2, vms->memmap[VIRT_GIC_REDIST2].size);
         }
 
-        if (vms->virt) {
+        if (vms->virt || armcpu->kvm_nested_virt) {
             qemu_fdt_setprop_cells(vms->fdt, nodename, "interrupts",
                                    GIC_FDT_IRQ_TYPE_PPI, ARCH_GICV3_MAINT_IRQ,
                                    GIC_FDT_IRQ_FLAGS_LEVEL_HI);
@@ -1329,7 +1330,6 @@ static void machvirt_init(MachineState *machine)
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     bool firmware_loaded = bios_name || drive_get(IF_PFLASH, 0, 0);
     bool aarch64 = true;
-    ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(0));
 
     /* We can probe only here because during property set
      * KVM is not available yet
@@ -1369,9 +1369,7 @@ static void machvirt_init(MachineState *machine)
      * and otherwise we will use HVC (for backwards compatibility and
      * because if we're using KVM then we must use HVC).
      */
-    if (armcpu->kvm_nested_virt) {
-        vms->psci_conduit = QEMU_PSCI_CONDUIT_SMC;
-    } else if (vms->secure && firmware_loaded) {
+    if (vms->secure && firmware_loaded) {
         vms->psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
     } else if (vms->virt) {
         vms->psci_conduit = QEMU_PSCI_CONDUIT_SMC;

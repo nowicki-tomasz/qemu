@@ -440,6 +440,11 @@ static void fdt_add_psci_node(void *fdt)
         g_assert_not_reached();
     }
 
+    if (armcpu->kvm_nested_virt) {
+        psci_method = "smc";
+        error_report("Nested enabled and SMC hypcall");
+    }
+
     /*
      * If /psci node is present in provided DTB, assume that no fixup
      * is necessary and all PSCI configuration should be taken as-is
