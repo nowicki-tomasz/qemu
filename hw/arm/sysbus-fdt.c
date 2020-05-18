@@ -431,6 +431,7 @@ static struct {
 } generic_properties[] = {
     { "name",            PROP_IGNORE }, /* handled automatically */
     { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+	{ "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
 
     /* The following are copied and remapped by dedicated code */
     { "reg",             PROP_IGNORE },
@@ -450,6 +451,10 @@ static struct {
     { "clock-names",     PROP_IGNORE },
     { "reset-names",     PROP_IGNORE },
     { "dma-names",       PROP_IGNORE },
+	{ "clocks",          PROP_IGNORE },
+	{ "phys",            PROP_IGNORE },
+	{ "phy-names",       PROP_IGNORE },
+	{ "usb-phy",         PROP_IGNORE },
 
     /* Whitelist of properties not taking phandles, and thus safe to copy */
     { "compatible",      PROP_COPY },
@@ -457,6 +462,13 @@ static struct {
     { "reg-names",       PROP_COPY },
     { "interrupt-names", PROP_COPY },
     { "#*-cells",        PROP_COPY },
+	{ "comreset_u",      PROP_COPY },
+	{ "comwake",         PROP_COPY },
+	{ "dma-coherent",    PROP_COPY },
+
+	{ "broken-cd",       PROP_COPY },
+	{ "bus-width",       PROP_COPY },
+	{ "vqmmc-supply",    PROP_COPY },
 };
 
 #ifndef CONFIG_FNMATCH
@@ -493,10 +505,12 @@ static enum GenericPropertyAction get_generic_property_action(const char *name)
 static void copy_generic_node(void *host_fdt, void *guest_fdt, char *host_path,
                               char *guest_path)
 {
-    int node, prop, len;
+    int node, prop, len;//, offset;
     const void *data;
     const char *name;
     enum GenericPropertyAction action;
+
+    error_report("%s validating host path %s", __func__, host_path);
 
     node = fdt_path_offset(host_fdt, host_path);
     if (node < 0) {
@@ -505,10 +519,26 @@ static void copy_generic_node(void *host_fdt, void *guest_fdt, char *host_path,
     }
 
     /* Submodes are not yet supported */
-    if (fdt_first_subnode(host_fdt, node) >= 0) {
-        error_report("%s has unsupported subnodes", host_path);
-        goto unsupported;
-    }
+//    offset = fdt_first_subnode(host_fdt, node);
+//    if (offset >= 0) {
+//    	unsigned int path_len = 16;
+//    	char *path, *sub_name;
+//    	int ret;
+//
+//    	sub_name = (char *)fdt_get_name(host_fdt, offset, &len);
+//        error_report("%s subnodes %s", __func__, sub_name);
+//
+//        path = g_malloc(path_len);
+//        while ((ret = fdt_get_path(host_fdt, offset, path, path_len))
+//              == -FDT_ERR_NOSPACE) {
+//            path_len += 16;
+//            path = g_realloc(path, path_len);
+//        }
+//        error_report("%s path %s!", __func__, path);
+//
+//        qemu_fdt_add_subnode(guest_fdt, sub_name);
+//        copy_generic_node(host_fdt, guest_fdt, path, sub_name);
+//    }
 
     /* Copy generic properties */
     fdt_for_each_property_offset(prop, host_fdt, node) {
@@ -522,10 +552,10 @@ static void copy_generic_node(void *host_fdt, void *guest_fdt, char *host_path,
         if (!len) {
             /* Zero-sized properties are safe to copy */
             action = PROP_COPY;
-        } else if (!strcmp(name, "clocks")) {
-            /* Reject "clocks" if "power-domains" is not present */
-            action = fdt_getprop(host_fdt, node, "power-domains", NULL)
-                     ? PROP_WARN : PROP_REJECT;
+//        } else if (!strcmp(name, "clocks")) {
+//            /* Reject "clocks" if "power-domains" is not present */
+//            action = fdt_getprop(host_fdt, node, "power-domains", NULL)
+//                     ? PROP_WARN : PROP_REJECT;
         } else {
             action = get_generic_property_action(name);
         }
@@ -557,49 +587,51 @@ unsupported:
  *
  * Generates a generic DT node by copying properties from the host
  */
-static int add_generic_fdt_node(SysBusDevice *sbdev, void *opaque)
+static int add_mvrl_sata_fdt_node(SysBusDevice *sbdev, void *opaque)
 {
     PlatformBusFDTData *data = opaque;
     VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
     const char *parent_node = data->pbus_node_name;
     void *guest_fdt = data->fdt, *host_fdt;
     VFIODevice *vbasedev = &vdev->vbasedev;
-    char **node_path, *node_name, *dt_name;
+    char **node_path, *node_name;
+    char *node_path_final;
     PlatformBusDevice *pbus = data->pbus;
     uint32_t *reg_attr, *irq_attr;
     uint64_t mmio_base;
     int i, irq_number;
     VFIOINTp *intp;
 
-    host_fdt = load_device_tree_from_sysfs();
+    error_report("%s 1!", __func__);
 
-    dt_name = sysfs_to_dt_name(vbasedev->name);
-    if (!dt_name) {
-        error_report("%s incorrect sysfs device name %s", __func__,
-                     vbasedev->name);
-        exit(1);
-    }
-    node_path = qemu_fdt_node_path(host_fdt, dt_name, vdev->compat,
+    host_fdt = load_device_tree_from_sysfs();
+    node_path = qemu_fdt_node_path(host_fdt, NULL, vdev->compat,
                                    &error_fatal);
     if (!node_path || !node_path[0]) {
-        error_report("%s unable to retrieve node path for %s/%s", __func__,
-                     dt_name, vdev->compat);
+        error_report("%s unable to retrieve node path for %s", __func__,
+                     vdev->compat);
         exit(1);
     }
 
-    if (node_path[1]) {
-        error_report("%s more than one node matching %s/%s!", __func__,
-                     dt_name, vdev->compat);
+    error_report("%s 2!", __func__);
+
+    if (!node_path[1]) {
+        error_report("%s no matching %s!", __func__, vdev->compat);
         exit(1);
     }
+    node_path_final = node_path[1];
+    error_report("%s matching %s/%s!", __func__, vdev->compat, node_path_final);
 
     mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
     node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
                                vbasedev->name, mmio_base);
+
+    error_report("%s adding node %s!", __func__, node_name);
+
     qemu_fdt_add_subnode(guest_fdt, node_name);
 
     /* Copy generic parts from host */
-    copy_generic_node(host_fdt, guest_fdt, node_path[0], node_name);
+    copy_generic_node(host_fdt, guest_fdt, node_path_final, node_name);
 
     /* Copy reg (remapped) */
     reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
@@ -639,7 +671,215 @@ static int add_generic_fdt_node(SysBusDevice *sbdev, void *opaque)
     g_free(reg_attr);
     g_free(node_name);
     g_strfreev(node_path);
-    g_free(dt_name);
+    g_free(host_fdt);
+    return 0;
+}
+
+static int add_mvrl_sdhci_fdt_node(SysBusDevice *sbdev, void *opaque)
+{
+    PlatformBusFDTData *data = opaque;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    const char *parent_node = data->pbus_node_name;
+    void *guest_fdt = data->fdt, *host_fdt;
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    char **node_path, *node_name, *clk_name_core, *clk_name_axi;
+    char *node_path_final;
+    PlatformBusDevice *pbus = data->pbus;
+    uint32_t *reg_attr, *irq_attr;
+    uint64_t mmio_base;
+    int i, irq_number;
+    VFIOINTp *intp;
+    uint32_t phandle_core, phandle_axi;
+    const char clocknames[] = "core\0axi";
+
+    error_report("%s 1!", __func__);
+
+    host_fdt = load_device_tree_from_sysfs();
+    node_path = qemu_fdt_node_path(host_fdt, NULL, vdev->compat,
+                                   &error_fatal);
+    if (!node_path || !node_path[0]) {
+        error_report("%s unable to retrieve node path for %s", __func__,
+                     vdev->compat);
+        exit(1);
+    }
+
+    error_report("%s 2!", __func__);
+
+    if (!node_path[1]) {
+        error_report("%s no matching %s!", __func__, vdev->compat);
+        exit(1);
+    }
+    node_path_final = node_path[0];
+    error_report("%s matching %s/%s!", __func__, vdev->compat, node_path_final);
+
+    mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
+    node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                               vbasedev->name, mmio_base);
+
+    error_report("%s adding node %s!", __func__, node_name);
+
+    qemu_fdt_add_subnode(guest_fdt, node_name);
+
+    /* Copy generic parts from host */
+    copy_generic_node(host_fdt, guest_fdt, node_path_final, node_name);
+
+    /* Copy reg (remapped) */
+    reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
+    for (i = 0; i < vbasedev->num_regions; i++) {
+        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
+        reg_attr[2 * i] = cpu_to_be32(mmio_base);
+        reg_attr[2 * i + 1] = cpu_to_be32(
+                                memory_region_size(vdev->regions[i]->mem));
+    }
+    qemu_fdt_setprop(guest_fdt, node_name, "reg", reg_attr,
+                     vbasedev->num_regions * 2 * sizeof(uint32_t));
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(guest_fdt, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+
+    phandle_core = qemu_fdt_alloc_phandle(guest_fdt);
+    clk_name_core = g_strdup_printf("%s/%s", parent_node, "clock-fixed-core");
+    qemu_fdt_add_subnode(guest_fdt, clk_name_core);
+
+    qemu_fdt_setprop_string(guest_fdt, clk_name_core, "compatible",
+    		                "fixed-clock");
+    qemu_fdt_setprop_cells(guest_fdt, clk_name_core, "#clock-cells", 0);
+    qemu_fdt_setprop_cells(guest_fdt, clk_name_core, "clock-frequency",
+    		               400000000);
+    qemu_fdt_setprop_cell(guest_fdt, clk_name_core, "phandle", phandle_core);
+
+
+    phandle_axi = qemu_fdt_alloc_phandle(guest_fdt);
+    clk_name_axi = g_strdup_printf("%s/%s", parent_node, "clock-fixed-axi");
+    qemu_fdt_add_subnode(guest_fdt, clk_name_axi);
+
+    qemu_fdt_setprop_string(guest_fdt, clk_name_axi, "compatible",
+    		                "fixed-clock");
+    qemu_fdt_setprop_cells(guest_fdt, clk_name_axi, "#clock-cells", 0);
+    qemu_fdt_setprop_cells(guest_fdt, clk_name_axi, "clock-frequency",
+        		               500000000);
+    qemu_fdt_setprop_cell(guest_fdt, clk_name_axi, "phandle", phandle_axi);
+
+
+    qemu_fdt_setprop(guest_fdt, node_name, "clock-names",
+                     clocknames, sizeof(clocknames));
+    qemu_fdt_setprop_cells(guest_fdt, node_name, "clocks",
+    		               phandle_core, phandle_axi);
+
+
+    g_free(reg_attr);
+    g_free(node_name);
+    g_strfreev(node_path);
+    g_free(host_fdt);
+    return 0;
+}
+
+static int add_mvrl_usb_fdt_node(SysBusDevice *sbdev, void *opaque)
+{
+    PlatformBusFDTData *data = opaque;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    const char *parent_node = data->pbus_node_name;
+    void *guest_fdt = data->fdt, *host_fdt;
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    char **node_path, *node_name;
+    char *node_path_final;
+    PlatformBusDevice *pbus = data->pbus;
+    uint32_t *reg_attr, *irq_attr;
+    uint64_t mmio_base;
+    int i, irq_number;
+    VFIOINTp *intp;
+
+    error_report("%s 1!", __func__);
+
+    host_fdt = load_device_tree_from_sysfs();
+    node_path = qemu_fdt_node_path(host_fdt, NULL, vdev->compat,
+                                   &error_fatal);
+    if (!node_path || !node_path[0]) {
+        error_report("%s unable to retrieve node path for %s", __func__,
+                     vdev->compat);
+        exit(1);
+    }
+
+    error_report("%s 2!", __func__);
+
+    if (!node_path[3]) {
+        error_report("%s no matching %s!", __func__, vdev->compat);
+        exit(1);
+    }
+    node_path_final = node_path[3];
+    error_report("%s matching %s/%s!", __func__, vdev->compat, node_path_final);
+
+    mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
+    node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                               vbasedev->name, mmio_base);
+
+    error_report("%s adding node %s!", __func__, node_name);
+
+    qemu_fdt_add_subnode(guest_fdt, node_name);
+
+    /* Copy generic parts from host */
+    copy_generic_node(host_fdt, guest_fdt, node_path_final, node_name);
+
+    /* Copy reg (remapped) */
+    reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
+    for (i = 0; i < vbasedev->num_regions; i++) {
+        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
+        reg_attr[2 * i] = cpu_to_be32(mmio_base);
+        reg_attr[2 * i + 1] = cpu_to_be32(
+                                memory_region_size(vdev->regions[i]->mem));
+    }
+    qemu_fdt_setprop(guest_fdt, node_name, "reg", reg_attr,
+                     vbasedev->num_regions * 2 * sizeof(uint32_t));
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(guest_fdt, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    g_free(reg_attr);
+    g_free(node_name);
+    g_strfreev(node_path);
     g_free(host_fdt);
     return 0;
 }
@@ -695,7 +935,9 @@ static const BindingEntry bindings[] = {
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
 #ifdef CONFIG_LINUX
     /* Generic DT fallback must be last */
-    VFIO_PLATFORM_BINDING(NULL, add_generic_fdt_node),
+    VFIO_PLATFORM_BINDING("marvell,armada-8k-ahci", add_mvrl_sata_fdt_node),
+	VFIO_PLATFORM_BINDING("marvell,armada-cp110-sdhci", add_mvrl_sdhci_fdt_node),
+	VFIO_PLATFORM_BINDING("generic-xhci", add_mvrl_usb_fdt_node),
 #endif
     TYPE_BINDING("", NULL), /* last element */
 };

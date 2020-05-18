@@ -299,23 +299,26 @@ char **qemu_fdt_node_path(void *fdt, const char *name, char *compat,
     offset = fdt_node_offset_by_compatible(fdt, -1, compat);
 
     while (offset >= 0) {
+        char *path;
+
+        error_report("%s offset %d n %d!", __func__, offset, n);
+
         iter_name = fdt_get_name(fdt, offset, &len);
         if (!iter_name) {
             offset = len;
             break;
         }
-        if (!strcmp(iter_name, name)) {
-            char *path;
+        error_report("%s iter_name %s!", __func__, iter_name);
 
-            path = g_malloc(path_len);
-            while ((ret = fdt_get_path(fdt, offset, path, path_len))
-                  == -FDT_ERR_NOSPACE) {
-                path_len += 16;
-                path = g_realloc(path, path_len);
-            }
-            path_list = g_slist_prepend(path_list, path);
-            n++;
+        path = g_malloc(path_len);
+        while ((ret = fdt_get_path(fdt, offset, path, path_len))
+              == -FDT_ERR_NOSPACE) {
+            path_len += 16;
+            path = g_realloc(path, path_len);
         }
+        error_report("%s path %s!", __func__, path);
+        path_list = g_slist_prepend(path_list, path);
+        n++;
         offset = fdt_node_offset_by_compatible(fdt, offset, compat);
     }
 
