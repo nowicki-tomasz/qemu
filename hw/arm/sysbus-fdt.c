@@ -675,6 +675,8 @@ static int add_mvrl_sata_fdt_node(SysBusDevice *sbdev, void *opaque)
     return 0;
 }
 
+#include <sys/ioctl.h>
+
 static int add_mvrl_sdhci_fdt_node(SysBusDevice *sbdev, void *opaque)
 {
     PlatformBusFDTData *data = opaque;
@@ -691,6 +693,11 @@ static int add_mvrl_sdhci_fdt_node(SysBusDevice *sbdev, void *opaque)
     VFIOINTp *intp;
     uint32_t phandle_core, phandle_axi;
     const char clocknames[] = "core\0axi";
+    DeviceState *dev;
+    struct vfio_clk clk;
+//    int ret;
+    SysBusDevice *sbd;
+    MemoryRegion *mr;
 
     error_report("%s 1!", __func__);
 
@@ -764,11 +771,41 @@ static int add_mvrl_sdhci_fdt_node(SysBusDevice *sbdev, void *opaque)
     qemu_fdt_add_subnode(guest_fdt, clk_name_core);
 
     qemu_fdt_setprop_string(guest_fdt, clk_name_core, "compatible",
-    		                "fixed-clock");
+    		                "mmio-clock");
     qemu_fdt_setprop_cells(guest_fdt, clk_name_core, "#clock-cells", 0);
-    qemu_fdt_setprop_cells(guest_fdt, clk_name_core, "clock-frequency",
-    		               400000000);
+    qemu_fdt_setprop_string(guest_fdt, clk_name_core, "clock-output-names",
+        		                "mmio_clock_core_debug");
     qemu_fdt_setprop_cell(guest_fdt, clk_name_core, "phandle", phandle_core);
+
+//    clk.argsz = sizeof(clk);
+    clk.index = 0;
+//    clk.flags = VFIO_CLK_ENABLE;
+//    ret = ioctl(vbasedev->fd, VFIO_DEVICE_CLK, &clk);
+//    if (ret)
+//    	error_report("************** %s ret %d", __func__, ret);
+
+    dev = qdev_create(NULL, "clock-mmio");
+
+    object_property_set_link(OBJECT(dev), OBJECT(vdev), "dev-client", &error_abort);
+    object_property_set_str(OBJECT(dev), "core" , "name", &error_abort);
+    object_property_set_uint(OBJECT(dev), clk.index , "index", &error_abort);
+
+
+    qdev_init_nofail(dev);
+    platform_bus_link_device(PLATFORM_BUS_DEVICE(pbus), SYS_BUS_DEVICE(dev));
+    mmio_base = platform_bus_get_mmio_addr(pbus, SYS_BUS_DEVICE(dev), 0);
+
+    g_free(reg_attr);
+    sbd = SYS_BUS_DEVICE(dev);
+    mr = sysbus_mmio_get_region(sbd, 0);
+    reg_attr = g_new(uint32_t, 2);
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(memory_region_size(mr));
+    qemu_fdt_setprop(guest_fdt, clk_name_core, "reg", reg_attr, 2 * sizeof(uint32_t));
+    g_free(reg_attr);
+
+    error_report("************** %s memory_region_size(mr) 0x%lx",
+    		__func__, (long)memory_region_size(mr));
 
 
     phandle_axi = qemu_fdt_alloc_phandle(guest_fdt);
@@ -776,12 +813,41 @@ static int add_mvrl_sdhci_fdt_node(SysBusDevice *sbdev, void *opaque)
     qemu_fdt_add_subnode(guest_fdt, clk_name_axi);
 
     qemu_fdt_setprop_string(guest_fdt, clk_name_axi, "compatible",
-    		                "fixed-clock");
+        		                "mmio-clock");
     qemu_fdt_setprop_cells(guest_fdt, clk_name_axi, "#clock-cells", 0);
-    qemu_fdt_setprop_cells(guest_fdt, clk_name_axi, "clock-frequency",
-        		               500000000);
+    qemu_fdt_setprop_string(guest_fdt, clk_name_axi, "clock-output-names",
+            		                "mmio_clock_axi_debug");
     qemu_fdt_setprop_cell(guest_fdt, clk_name_axi, "phandle", phandle_axi);
 
+//    clk.argsz = sizeof(clk);
+    clk.index = 1;
+//    clk.flags = VFIO_CLK_ENABLE;
+//    ret = ioctl(vbasedev->fd, VFIO_DEVICE_CLK, &clk);
+//    if (ret)
+//        error_report("************** %s ret %d", __func__, ret);
+
+    dev = qdev_create(NULL, "clock-mmio");
+
+    object_property_set_link(OBJECT(dev), OBJECT(vdev), "dev-client", &error_abort);
+    object_property_set_str(OBJECT(dev), "axi" , "name", &error_abort);
+    object_property_set_uint(OBJECT(dev), clk.index , "index", &error_abort);
+
+    qdev_init_nofail(dev);
+    platform_bus_link_device(PLATFORM_BUS_DEVICE(pbus), SYS_BUS_DEVICE(dev));
+    mmio_base = platform_bus_get_mmio_addr(pbus, SYS_BUS_DEVICE(dev), 0);
+
+
+    g_free(reg_attr);
+    sbd = SYS_BUS_DEVICE(dev);
+    mr = sysbus_mmio_get_region(sbd, 0);
+    reg_attr = g_new(uint32_t, 2);
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(memory_region_size(mr));
+    qemu_fdt_setprop(guest_fdt, clk_name_axi, "reg", reg_attr, 2 * sizeof(uint32_t));
+    g_free(reg_attr);
+
+    error_report("************** %s memory_region_size(mr) 0x%lx",
+        		__func__, (long)memory_region_size(mr));
 
     qemu_fdt_setprop(guest_fdt, node_name, "clock-names",
                      clocknames, sizeof(clocknames));
@@ -789,7 +855,7 @@ static int add_mvrl_sdhci_fdt_node(SysBusDevice *sbdev, void *opaque)
     		               phandle_core, phandle_axi);
 
 
-    g_free(reg_attr);
+
     g_free(node_name);
     g_strfreev(node_path);
     g_free(host_fdt);
