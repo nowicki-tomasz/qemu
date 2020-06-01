@@ -576,6 +576,65 @@ void copy_host_node_prop(VFIOPlatformDevice *vdev, void *fdt_guest,
     g_free(fdt_host);
 }
 
+static void fdt_clock_mmio_realize(PlatformBusFDTData *data,
+                                   VFIOPlatformDevice *vdev, int index,
+                                   uint64_t *mmio_base, uint64_t *mmio_size)
+{
+    PlatformBusDevice *pbus = data->pbus;
+    DeviceState *dev;
+    MemoryRegion *mr;
+    char *clk_dev_name;
+    static int instance;
+
+    clk_dev_name = g_strdup_printf("%s-%" PRIx32, "clk-mmio", instance++);
+
+    dev = qdev_create(NULL, "clock-mmio");
+    object_property_set_link(OBJECT(dev), OBJECT(vdev), "dev-client", &error_abort);
+    object_property_set_str(OBJECT(dev), clk_dev_name , "name", &error_abort);
+    object_property_set_uint(OBJECT(dev), index , "index", &error_abort);
+    qdev_init_nofail(dev);
+
+    platform_bus_link_device(PLATFORM_BUS_DEVICE(pbus), SYS_BUS_DEVICE(dev));
+    *mmio_base = platform_bus_get_mmio_addr(pbus, SYS_BUS_DEVICE(dev), 0);
+    mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
+    *mmio_size = memory_region_size(mr);
+}
+
+void fdt_build_clock_mmio_node(PlatformBusFDTData *data,
+                               VFIOPlatformDevice *vdev,
+                               int index,
+                               void *guest_fdt,
+                               uint32_t guest_clk_phandle);
+void fdt_build_clock_mmio_node(PlatformBusFDTData *data,
+                               VFIOPlatformDevice *vdev,
+                               int index,
+                               void *guest_fdt,
+                               uint32_t guest_clk_phandle)
+{
+    const char *parent_node = data->pbus_node_name;
+    uint64_t mmio_base, mmio_size;
+    uint32_t reg_attr[2];
+    char *clk_node_name;
+
+    fdt_clock_mmio_realize(data, vdev, index, &mmio_base, &mmio_size);
+
+    clk_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                    "clk-mmio", mmio_base);
+    qemu_fdt_add_subnode(guest_fdt, clk_node_name);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "compatible",
+                            "mmio-clock");
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "#clock-cells", 0);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "clock-output-names",
+                            "mmio_clock_output");
+    qemu_fdt_setprop_cell(guest_fdt, clk_node_name, "phandle",
+                          guest_clk_phandle);
+
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(mmio_size);
+    qemu_fdt_setprop(guest_fdt, clk_node_name, "reg", reg_attr,
+                     2 * sizeof(uint32_t));
+}
+
 /* DT compatible matching */
 static bool vfio_platform_match(SysBusDevice *sbdev,
                                 const BindingEntry *entry)
