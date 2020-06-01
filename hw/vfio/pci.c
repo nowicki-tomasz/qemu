@@ -2320,11 +2320,13 @@ static int vfio_pci_hot_reset(VFIOPCIDevice *vdev, bool single)
     }
 
     /* Bus reset! */
+#if 0
     ret = ioctl(vdev->vbasedev.fd, VFIO_DEVICE_PCI_HOT_RESET, reset);
     g_free(reset);
 
     trace_vfio_pci_hot_reset_result(vdev->vbasedev.name,
                                     ret ? "%m" : "Success");
+#endif
 
 out:
     /* Re-enable INTx on affected devices */
