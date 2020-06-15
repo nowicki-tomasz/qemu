@@ -143,14 +143,22 @@ static uint64_t virtio_mmio_read(void *opaque, hwaddr offset, unsigned size)
     case VIRTIO_MMIO_VENDOR_ID:
         return VIRT_VENDOR;
     case VIRTIO_MMIO_DEVICE_FEATURES:
+
+    	error_report("%s 1\n", __func__);
         if (proxy->legacy) {
+        	error_report("%s 11\n", __func__);
             if (proxy->host_features_sel) {
+            	error_report("%s 111\n", __func__);
                 return 0;
             } else {
+            	error_report("%s 112\n", __func__);
                 return vdev->host_features;
             }
         } else {
             VirtioDeviceClass *vdc = VIRTIO_DEVICE_GET_CLASS(vdev);
+
+            error_report("%s 2\n", __func__);
+
             return (vdev->host_features & ~vdc->legacy_features)
                 >> (32 * proxy->host_features_sel);
         }

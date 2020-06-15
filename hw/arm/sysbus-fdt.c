@@ -38,6 +38,7 @@
 #include "hw/vfio/vfio-platform.h"
 #include "hw/vfio/vfio-calxeda-xgmac.h"
 #include "hw/vfio/vfio-amd-xgbe.h"
+#include "hw/virtio/virtio-mmio.h"
 #include "hw/display/ramfb.h"
 #include "hw/arm/fdt.h"
 
@@ -699,26 +700,41 @@ static void copy_host_node_prop(VFIOPlatformDevice *vdev, void *fdt_guest,
 
 static void fdt_clock_mmio_realize(PlatformBusFDTData *data,
                                    VFIOPlatformDevice *vdev, int index,
-                                   uint64_t *mmio_base, uint64_t *mmio_size)
+                                   uint64_t *mmio_base, uint64_t *mmio_size,
+								   int *irq_number)
 {
     PlatformBusDevice *pbus = data->pbus;
-    DeviceState *dev;
+    DeviceState *dev, *proxy_dev;
+    VirtIOMMIOProxy *proxy;
     MemoryRegion *mr;
     char *clk_dev_name;
     static int instance;
 
+    /* Allocate resources dynamically under platform bus. */
+    proxy_dev = qdev_create(NULL, "virtio-mmio");
+//    object_property_set_bool(OBJECT(proxy_dev), false , "force-legacy", &error_abort);
+    qdev_init_nofail(proxy_dev);
+    proxy = VIRTIO_MMIO(proxy_dev);
+    platform_bus_link_device(pbus, SYS_BUS_DEVICE(proxy_dev));
+
     clk_dev_name = g_strdup_printf("%s-%" PRIx32, "clk-mmio", instance++);
 
-    dev = qdev_create(NULL, "clock-mmio");
+    dev = DEVICE(object_new("vhost-vfio-platform"));
+    qdev_set_parent_bus(dev, BUS(&proxy->bus));
+
     object_property_set_link(OBJECT(dev), OBJECT(vdev), "dev-client", &error_abort);
     object_property_set_str(OBJECT(dev), clk_dev_name , "name", &error_abort);
     object_property_set_uint(OBJECT(dev), index , "index", &error_abort);
     qdev_init_nofail(dev);
 
-    platform_bus_link_device(PLATFORM_BUS_DEVICE(pbus), SYS_BUS_DEVICE(dev));
-    *mmio_base = platform_bus_get_mmio_addr(pbus, SYS_BUS_DEVICE(dev), 0);
-    mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
+    mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(proxy), 0);
+    *mmio_base = object_property_get_uint(OBJECT(mr), "addr", NULL);
     *mmio_size = memory_region_size(mr);
+    *irq_number = platform_bus_get_irqn(pbus, SYS_BUS_DEVICE(proxy_dev), 0) +
+            data->irq_start;
+
+    error_report("---------> %s base 0x%lx size 0x%lx irq %d",
+    		__func__, *mmio_base, *mmio_size, *irq_number);
 }
 
 static void fdt_build_clock_mmio_node(PlatformBusFDTData *data,
@@ -731,14 +747,15 @@ static void fdt_build_clock_mmio_node(PlatformBusFDTData *data,
     uint64_t mmio_base, mmio_size;
     uint32_t reg_attr[2];
     char *clk_node_name;
+    int irq;
 
-    fdt_clock_mmio_realize(data, vdev, index, &mmio_base, &mmio_size);
+    fdt_clock_mmio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq);
 
     clk_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
-                                    "clk-mmio", mmio_base);
+                                    "virtio_mmio", mmio_base);
     qemu_fdt_add_subnode(guest_fdt, clk_node_name);
     qemu_fdt_setprop_string(guest_fdt, clk_node_name, "compatible",
-                            "mmio-clock");
+                            "virtio,mmio");
     qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "#clock-cells", 0);
     qemu_fdt_setprop_string(guest_fdt, clk_node_name, "clock-output-names",
                             "mmio_clock_output");
@@ -749,6 +766,14 @@ static void fdt_build_clock_mmio_node(PlatformBusFDTData *data,
     reg_attr[1] = cpu_to_be32(mmio_size);
     qemu_fdt_setprop(guest_fdt, clk_node_name, "reg", reg_attr,
                      2 * sizeof(uint32_t));
+//    qemu_fdt_setprop_sized_cells(guest_fdt, clk_node_name, "reg",
+//                                 2, mmio_base, 2, mmio_size);
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+    qemu_fdt_setprop(guest_fdt, clk_node_name, "dma-coherent", NULL, 0);
+
+    error_report("---------> %s", __func__);
 }
 
 static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
@@ -763,7 +788,7 @@ static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
     uint32_t *reg_attr, *irq_attr, *guest_clk_phandle;
     char *node_name;
     uint64_t mmio_base;
-    int i, irq_number;
+    int i, irq_number = 0;
     VFIOINTp *intp;
 
     mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
@@ -807,9 +832,15 @@ static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
                          irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
         g_free(irq_attr);
     }
+    error_report("---------> %s base 0x%lx  irq %d",
+    		__func__, mmio_base, irq_number);
+
+    error_report("---------> %s", __func__);
 
     guest_clk_phandle = g_new(uint32_t, vbasedev->num_clks);
     for (i = 0; i < vbasedev->num_clks;  i++) {
+    	error_report("---------> %s clock %d", __func__, i);
+
         guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
         fdt_build_clock_mmio_node(data, vdev, i, fdt_guest,
                                   guest_clk_phandle[i]);
@@ -819,7 +850,6 @@ static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
         qemu_fdt_setprop(fdt_guest, node_name, "clocks", guest_clk_phandle,
                          vbasedev->num_clks * sizeof(uint32_t));
     }
-
 
     g_free(reg_attr);
     g_free(node_name);

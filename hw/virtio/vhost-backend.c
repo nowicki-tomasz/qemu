@@ -237,6 +237,17 @@ static void vhost_kernel_set_iotlb_callback(struct vhost_dev *dev,
         qemu_set_fd_handler((uintptr_t)dev->opaque, NULL, NULL, NULL);
 }
 
+static int vhost_kernel_set_vfio_fd(struct vhost_dev *dev,
+									struct vfio_companion_device *info)
+{
+    return vhost_kernel_call(dev, VHOST_VFIO_FD, info);
+}
+
+static int vhost_kernel_vfio_set_running(struct vhost_dev *dev, int start)
+{
+    return vhost_kernel_call(dev, VHOST_VFIO_SET_RUNNING, &start);
+}
+
 static const VhostOps kernel_ops = {
         .backend_type = VHOST_BACKEND_TYPE_KERNEL,
         .vhost_backend_init = vhost_kernel_init,
@@ -268,6 +279,8 @@ static const VhostOps kernel_ops = {
 #endif /* CONFIG_VHOST_VSOCK */
         .vhost_set_iotlb_callback = vhost_kernel_set_iotlb_callback,
         .vhost_send_device_iotlb_msg = vhost_kernel_send_device_iotlb_msg,
+        .vhost_vfio_set_fd = vhost_kernel_set_vfio_fd,
+        .vhost_vfio_set_running = vhost_kernel_vfio_set_running,
 };
 #endif
 

@@ -427,8 +427,8 @@ static inline bool qbus_is_full(BusState *bus)
  * If more than one exists, prefer one that can take another device.
  * Return the bus if found, else %NULL.
  */
-static BusState *qbus_find_recursive(BusState *bus, const char *name,
-                                     const char *bus_typename)
+BusState *qbus_find_recursive(BusState *bus, const char *name,
+                              const char *bus_typename)
 {
     BusChild *kid;
     BusState *pick, *child, *ret;
