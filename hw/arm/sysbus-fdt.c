@@ -27,6 +27,9 @@
 #ifdef CONFIG_LINUX
 #include <linux/vfio.h>
 #endif
+#ifdef CONFIG_FNMATCH
+#include <fnmatch.h>
+#endif
 #include "hw/arm/sysbus-fdt.h"
 #include "qemu/error-report.h"
 #include "sysemu/device_tree.h"
@@ -48,6 +51,18 @@ typedef struct PlatformBusFDTData {
     const char *pbus_node_name; /* name of the platform bus node */
     PlatformBusDevice *pbus;
 } PlatformBusFDTData;
+
+enum GenericPropertyAction {
+    PROP_IGNORE,
+    PROP_WARN,
+    PROP_COPY,
+    PROP_REJECT,
+};
+
+typedef struct ProppertList{
+    const char *name;
+    enum GenericPropertyAction action;
+} ProppertList;
 
 /* struct that allows to match a device and create its FDT node */
 typedef struct BindingEntry {
@@ -415,6 +430,150 @@ static int add_amd_xgbe_fdt_node(SysBusDevice *sbdev, void *opaque,
     g_free(reg_attr);
     g_free(nodename);
     return 0;
+}
+
+#ifndef CONFIG_FNMATCH
+/* Fall back to exact string matching instead of allowing wildcards */
+static inline int fnmatch(const char *pattern, const char *string, int flags)
+{
+        return strcmp(pattern, string);
+}
+#endif
+
+static enum GenericPropertyAction get_property_action(const char *name,
+                                                      ProppertList *properties)
+{
+    unsigned int i;
+
+    for (i = 0; properties[i].name; i++) {
+        if (!fnmatch(properties[i].name, name, 0)) {
+            return properties[i].action;
+        }
+    }
+
+    /*
+     * Unfortunately DT properties do not carry type information,
+     * so we have to assume everything else contains a phandle,
+     * and must be rejected
+     */
+    return PROP_REJECT;
+}
+
+/**
+ * copy_node_prop
+ *
+ * Copy the listed properties from the host DT node
+ */
+static void copy_node_prop(void *host_fdt, void *guest_fdt, char *host_path,
+                              char *guest_path, ProppertList *properties)
+{
+    int node, prop, len;
+    const void *data;
+    const char *name;
+    enum GenericPropertyAction action;
+
+    node = fdt_path_offset(host_fdt, host_path);
+    if (node < 0) {
+        error_report("Cannot find node %s: %s", host_path, fdt_strerror(node));
+        exit(1);
+    }
+
+    /* Subnodes are not yet supported, ignore */
+    if (fdt_first_subnode(host_fdt, node) >= 0) {
+        warn_report("%s has unsupported subnodes", host_path);
+    }
+
+    /* Copy properties */
+    fdt_for_each_property_offset(prop, host_fdt, node) {
+        data = fdt_getprop_by_offset(host_fdt, prop, &name, &len);
+        if (!data) {
+            error_report("Cannot get property of %s: %s", host_path,
+                         fdt_strerror(len));
+            exit(1);
+        }
+
+        if (!len) {
+            /* Zero-sized properties are safe to copy */
+            action = PROP_COPY;
+        } else {
+            action = get_property_action(name, properties);
+        }
+
+        switch (action) {
+        case PROP_WARN:
+            warn_report("%s: Ignoring %s property", host_path, name);
+        case PROP_IGNORE:
+            break;
+
+        case PROP_COPY:
+            qemu_fdt_setprop(guest_fdt, guest_path, name, data, len);
+            break;
+
+        case PROP_REJECT:
+            error_report("%s has unsupported %s property", host_path, name);
+            goto unsupported;
+        }
+    }
+    return;
+
+unsupported:
+    exit(1);
+}
+
+void copy_host_node_prop(VFIOPlatformDevice *vdev, void *fdt_guest,
+                         char *node_name, ProppertList *properties);
+void copy_host_node_prop(VFIOPlatformDevice *vdev, void *fdt_guest,
+                         char *node_name, ProppertList *properties)
+{
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    char *tmp, sysfs_node_path[PATH_MAX], *root_node_path;
+    char path_delimit[] = "devicetree/base";
+    char **fdt_path_array, *fdt_path_final = NULL;
+    void *fdt_host;
+    ssize_t len;
+    int i = 0;
+
+    /*
+     * It is perfectly legal to have two nodes with the same name and
+     * compatible, therefore for lookup we need to deal with full DTS path.
+     */
+    tmp = g_strdup_printf("%s/of_node", vbasedev->sysfsdev);
+    len = readlink(tmp, sysfs_node_path, sizeof(sysfs_node_path));
+    g_free(tmp);
+
+    if (len < 0 || len >= sizeof(sysfs_node_path)) {
+        error_report("no of_node found for %s", vdev->compat);
+        exit(1);
+    }
+
+    sysfs_node_path[len] = 0;
+    root_node_path = strstr(sysfs_node_path, path_delimit);
+    /* Skip delimiter to have root based DTS path */
+    root_node_path += strlen(path_delimit);
+
+    fdt_host = load_device_tree_from_sysfs();
+    fdt_path_array = qemu_fdt_node_path(fdt_host, NULL, vdev->compat,
+                                   &error_fatal);
+
+    while (fdt_path_array[i]) {
+        if (strncmp(fdt_path_array[i], root_node_path,
+                    strlen(root_node_path)) == 0) {
+            fdt_path_final = fdt_path_array[i];
+            break;
+        }
+        i++;
+    }
+
+    if (!fdt_path_final) {
+        error_report("%s %s node not found!", __func__, root_node_path);
+        exit(1);
+    }
+
+    /* Copy whitelist properties from host */
+    copy_node_prop(fdt_host, fdt_guest, fdt_path_final, node_name, properties);
+
+    g_strfreev(fdt_path_array);
+    g_free(fdt_host);
 }
 
 /* DT compatible matching */
