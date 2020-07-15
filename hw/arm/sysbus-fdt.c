@@ -53,8 +53,9 @@ typedef struct PlatformBusFDTData {
 typedef struct BindingEntry {
     const char *typename;
     const char *compat;
-    int  (*add_fn)(SysBusDevice *sbdev, void *opaque);
+    int  (*add_fn)(SysBusDevice *sbdev, void *opaque, ProppertList *properties);
     bool (*match_fn)(SysBusDevice *sbdev, const struct BindingEntry *combo);
+    ProppertList *properties;
 } BindingEntry;
 
 /* helpers */
@@ -210,7 +211,8 @@ out:
  * Generates a simple node with following properties:
  * compatible string, regs, interrupts, dma-coherent
  */
-static int add_calxeda_midway_xgmac_fdt_node(SysBusDevice *sbdev, void *opaque)
+static int add_calxeda_midway_xgmac_fdt_node(SysBusDevice *sbdev, void *opaque,
+                                             ProppertList *properties)
 {
     PlatformBusFDTData *data = opaque;
     PlatformBusDevice *pbus = data->pbus;
@@ -287,7 +289,8 @@ static HostProperty amd_xgbe_copied_properties[] = {
  *
  * Asserts in case of error
  */
-static int add_amd_xgbe_fdt_node(SysBusDevice *sbdev, void *opaque)
+static int add_amd_xgbe_fdt_node(SysBusDevice *sbdev, void *opaque,
+                                 ProppertList *properties)
 {
     PlatformBusFDTData *data = opaque;
     PlatformBusDevice *pbus = data->pbus;
@@ -432,8 +435,8 @@ static bool vfio_platform_match(SysBusDevice *sbdev,
     return false;
 }
 
-#define VFIO_PLATFORM_BINDING(compat, add_fn) \
-    {TYPE_VFIO_PLATFORM, (compat), (add_fn), vfio_platform_match}
+#define VFIO_PLATFORM_BINDING(compat, add_fn, prop) \
+    {TYPE_VFIO_PLATFORM, (compat), (add_fn), vfio_platform_match, (prop)}
 
 #endif /* CONFIG_LINUX */
 
@@ -444,7 +447,8 @@ static bool vfio_platform_match(SysBusDevice *sbdev,
  * Documentation/devicetree/bindings/security/tpm/tpm_tis_mmio.txt
  * Optional interrupt for command completion is not exposed
  */
-static int add_tpm_tis_fdt_node(SysBusDevice *sbdev, void *opaque)
+static int add_tpm_tis_fdt_node(SysBusDevice *sbdev, void *opaque,
+                                ProppertList *properties)
 {
     PlatformBusFDTData *data = opaque;
     PlatformBusDevice *pbus = data->pbus;
@@ -468,7 +472,9 @@ static int add_tpm_tis_fdt_node(SysBusDevice *sbdev, void *opaque)
     return 0;
 }
 
-static int no_fdt_node(SysBusDevice *sbdev, void *opaque)
+
+static int no_fdt_node(SysBusDevice *sbdev, void *opaque,
+                       ProppertList *properties)
 {
     return 0;
 }
@@ -479,14 +485,14 @@ static bool type_match(SysBusDevice *sbdev, const BindingEntry *entry)
     return !strcmp(object_get_typename(OBJECT(sbdev)), entry->typename);
 }
 
-#define TYPE_BINDING(type, add_fn) {(type), NULL, (add_fn), NULL}
+#define TYPE_BINDING(type, add_fn) {(type), NULL, (add_fn), NULL, NULL}
 
 /* list of supported dynamic sysbus bindings */
 static const BindingEntry bindings[] = {
 #ifdef CONFIG_LINUX
     TYPE_BINDING(TYPE_VFIO_CALXEDA_XGMAC, add_calxeda_midway_xgmac_fdt_node),
     TYPE_BINDING(TYPE_VFIO_AMD_XGBE, add_amd_xgbe_fdt_node),
-    VFIO_PLATFORM_BINDING("amd,xgbe-seattle-v1a", add_amd_xgbe_fdt_node),
+    VFIO_PLATFORM_BINDING("amd,xgbe-seattle-v1a", add_amd_xgbe_fdt_node, NULL),
 #endif
     TYPE_BINDING(TYPE_TPM_TIS_SYSBUS, add_tpm_tis_fdt_node),
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
@@ -514,7 +520,7 @@ static void add_fdt_node(SysBusDevice *sbdev, void *opaque)
 
         if (type_match(sbdev, iter)) {
             if (!iter->match_fn || iter->match_fn(sbdev, iter)) {
-                ret = iter->add_fn(sbdev, opaque);
+                ret = iter->add_fn(sbdev, opaque, iter->properties);
                 assert(!ret);
                 return;
             }
