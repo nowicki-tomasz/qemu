@@ -576,6 +576,80 @@ void copy_host_node_prop(VFIOPlatformDevice *vdev, void *fdt_guest,
     g_free(fdt_host);
 }
 
+static void fdt_virtio_clk_realize(PlatformBusFDTData *data,
+                                   VFIOPlatformDevice *vdev, int index,
+                                   uint64_t *mmio_base, uint64_t *mmio_size,
+                                   int *irq_number)
+{
+    PlatformBusDevice *pbus = data->pbus;
+    DeviceState *dev, *proxy_dev;
+    VirtIOMMIOProxy *proxy;
+    static int instance;
+    char *clk_dev_name;
+    MemoryRegion *mr;
+
+    /* Allocate resources dynamically under platform bus. */
+    proxy_dev = qdev_create(NULL, "virtio-mmio");
+    qdev_init_nofail(proxy_dev);
+    proxy = VIRTIO_MMIO(proxy_dev);
+    platform_bus_link_device(pbus, SYS_BUS_DEVICE(proxy_dev));
+
+    dev = DEVICE(object_new("vhost-vfio-platform"));
+    qdev_set_parent_bus(dev, BUS(&proxy->bus));
+
+    clk_dev_name = g_strdup_printf("%s-%" PRIx32, "clk-virtio-mmio", instance++);
+    object_property_set_str(OBJECT(dev), clk_dev_name , "name", &error_abort);
+    object_property_set_uint(OBJECT(dev), VIRTIO_ID_CLK , "device_id", &error_abort);
+    object_property_set_link(OBJECT(dev), OBJECT(vdev), "dev-client", &error_abort);
+    object_property_set_uint(OBJECT(dev), index , "index", &error_abort);
+    qdev_init_nofail(dev);
+
+    mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(proxy), 0);
+    *mmio_base = object_property_get_uint(OBJECT(mr), "addr", NULL);
+    *mmio_size = memory_region_size(mr);
+    *irq_number = platform_bus_get_irqn(pbus, SYS_BUS_DEVICE(proxy_dev), 0) +
+                                                              data->irq_start;
+}
+
+void fdt_build_virtio_clk_node(PlatformBusFDTData *data,
+                               VFIOPlatformDevice *vdev,
+                               int index,
+                               void *guest_fdt,
+                               uint32_t guest_clk_phandle);
+void fdt_build_virtio_clk_node(PlatformBusFDTData *data,
+                               VFIOPlatformDevice *vdev,
+                               int index,
+                               void *guest_fdt,
+                               uint32_t guest_clk_phandle)
+{
+    const char *parent_node = data->pbus_node_name;
+    uint64_t mmio_base, mmio_size;
+    uint32_t reg_attr[2];
+    char *clk_node_name;
+    int irq;
+
+    fdt_virtio_clk_realize(data, vdev, index, &mmio_base, &mmio_size, &irq);
+
+    clk_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                    "virtio_mmio", mmio_base);
+    qemu_fdt_add_subnode(guest_fdt, clk_node_name);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "compatible",
+                            "virtio,mmio");
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "#clock-cells", 0);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "clock-output-names",
+                            "mmio_clock_output");
+    qemu_fdt_setprop_cell(guest_fdt, clk_node_name, "phandle",
+                          guest_clk_phandle);
+
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(mmio_size);
+    qemu_fdt_setprop(guest_fdt, clk_node_name, "reg", reg_attr,
+                     2 * sizeof(uint32_t));
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+}
+
 /* DT compatible matching */
 static bool vfio_platform_match(SysBusDevice *sbdev,
                                 const BindingEntry *entry)
