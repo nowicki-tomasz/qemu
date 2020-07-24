@@ -1592,6 +1592,7 @@ int vfio_get_device(VFIOGroup *group, const char *name,
     vbasedev->num_regions = dev_info.num_regions;
     vbasedev->num_clks = dev_info.num_clks;
     vbasedev->flags = dev_info.flags;
+    vbasedev->num_regulators = dev_info.num_regulators;
 
     trace_vfio_get_device(name, dev_info.flags, dev_info.num_regions,
                           dev_info.num_irqs);

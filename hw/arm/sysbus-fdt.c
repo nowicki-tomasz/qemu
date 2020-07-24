@@ -523,6 +523,8 @@ static ProppertList mvrl_armada_sdhci_properties[] = {
     /* The following are copied and remapped by dedicated code */
     { "reg",             PROP_IGNORE },
     { "interrupts",      PROP_IGNORE },
+    { "clocks",          PROP_IGNORE },
+    { "*-supply",        PROP_IGNORE },
 
     /* The following are handled by the host */
     { "power-domains",   PROP_IGNORE }, /* power management (+ opt. clocks) */
@@ -537,7 +539,6 @@ static ProppertList mvrl_armada_sdhci_properties[] = {
     /* The following are irrelevant, as corresponding specifiers are ignored */
     { "reset-names",     PROP_IGNORE },
     { "dma-names",       PROP_IGNORE },
-    { "clocks",          PROP_IGNORE },
     { "phys",            PROP_IGNORE },
     { "phy-names",       PROP_IGNORE },
     { "usb-phy",         PROP_IGNORE },
@@ -554,7 +555,6 @@ static ProppertList mvrl_armada_sdhci_properties[] = {
     { "no-1-8-v",        PROP_COPY },
     { "broken-cd",       PROP_COPY },
     { "bus-width",       PROP_COPY },
-    { "vqmmc-supply",    PROP_COPY },
 
     { NULL,              PROP_IGNORE },  /* last element */
 };
@@ -701,10 +701,11 @@ static void copy_host_node_prop(VFIOPlatformDevice *vdev, void *fdt_guest,
     g_free(fdt_host);
 }
 
-static void fdt_virtio_clk_realize(PlatformBusFDTData *data,
+static void fdt_virtio_realize(PlatformBusFDTData *data,
                                    VFIOPlatformDevice *vdev, int index,
                                    uint64_t *mmio_base, uint64_t *mmio_size,
-                                   int *irq_number)
+                                   int *irq_number,
+                                   uint64_t virtio_id)
 {
     PlatformBusDevice *pbus = data->pbus;
     DeviceState *dev, *proxy_dev;
@@ -724,7 +725,7 @@ static void fdt_virtio_clk_realize(PlatformBusFDTData *data,
 
     clk_dev_name = g_strdup_printf("%s-%" PRIx32, "clk-virtio-mmio", instance++);
     object_property_set_str(OBJECT(dev), clk_dev_name , "name", &error_abort);
-    object_property_set_uint(OBJECT(dev), VIRTIO_ID_CLK , "device_id", &error_abort);
+    object_property_set_uint(OBJECT(dev), virtio_id , "device_id", &error_abort);
     object_property_set_link(OBJECT(dev), OBJECT(vdev), "dev-client", &error_abort);
     object_property_set_uint(OBJECT(dev), index , "index", &error_abort);
     qdev_init_nofail(dev);
@@ -748,7 +749,8 @@ static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
     char *clk_node_name;
     int irq;
 
-    fdt_virtio_clk_realize(data, vdev, index, &mmio_base, &mmio_size, &irq);
+    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
+                           VIRTIO_ID_CLK);
 
     clk_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
                                     "virtio_mmio", mmio_base);
@@ -769,6 +771,38 @@ static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
                            GIC_FDT_IRQ_TYPE_SPI, irq,
                            GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
 }
+
+//static void fdt_build_virtio_regulator_mmio_node(PlatformBusFDTData *data,
+//                                                 VFIOPlatformDevice *vdev,
+//                                                 int index,
+//                                                 void *guest_fdt,
+//                                                 uint32_t guest_clk_phandle)
+//{
+//    const char *parent_node = data->pbus_node_name;
+//    uint64_t mmio_base, mmio_size;
+//    uint32_t reg_attr[2];
+//    char *regulator_node_name;
+//    int irq;
+//
+//    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
+//                       VIRTIO_ID_REGULATOR);
+//
+//    regulator_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+//                                    "virtio_mmio", mmio_base);
+//    qemu_fdt_add_subnode(guest_fdt, regulator_node_name);
+//    qemu_fdt_setprop_string(guest_fdt, regulator_node_name, "compatible",
+//                            "virtio,mmio");
+//    qemu_fdt_setprop_cell(guest_fdt, regulator_node_name, "phandle",
+//                          guest_clk_phandle);
+//
+//    reg_attr[0] = cpu_to_be32(mmio_base);
+//    reg_attr[1] = cpu_to_be32(mmio_size);
+//    qemu_fdt_setprop(guest_fdt, regulator_node_name, "reg", reg_attr,
+//                     2 * sizeof(uint32_t));
+//    qemu_fdt_setprop_cells(guest_fdt, regulator_node_name, "interrupts",
+//                           GIC_FDT_IRQ_TYPE_SPI, irq,
+//                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+//}
 
 static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
@@ -838,7 +872,23 @@ static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
         qemu_fdt_setprop(fdt_guest, node_name, "clocks", guest_clk_phandle,
                          vbasedev->num_clks * sizeof(uint32_t));
     }
+    g_free(guest_clk_phandle);
 
+//    guest_clk_phandle = g_new(uint32_t, vbasedev->num_regulators);
+//    for (i = 0; i < vbasedev->num_regulators;  i++) {
+//        char *supply_name;
+//
+//        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+//        fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt_guest,
+//                                             guest_clk_phandle[i]);
+//        supply_name = g_strdup_printf("%s-supply",
+//                                      vbasedev->regulator_names[i]);
+//        qemu_fdt_setprop_cell(fdt_guest, node_name, supply_name,
+//                              guest_clk_phandle[i]);
+//        /* TODO: copy regulator's properties/constrains */
+//    }
+//
+//    g_free(guest_clk_phandle);
     g_free(reg_attr);
     g_free(node_name);
     return 0;
