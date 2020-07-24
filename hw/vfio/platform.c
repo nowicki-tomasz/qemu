@@ -438,6 +438,35 @@ static int vfio_platform_hot_reset_multi(VFIODevice *vbasedev)
     return -1;
 }
 
+static char *vfio_platform_get_regulator(VFIODevice *vbasedev, int index,
+                                       Error **errp)
+{
+    struct vfio_regulator_info reg_info = {
+            .argsz = sizeof(reg_info),
+            .index = index,
+            .len = 32, /* Arbitrary name length */
+    };
+    int ret;
+
+    reg_info.usr_data = (uint64_t)g_new0(uint8_t, reg_info.len);
+    ret = ioctl(vbasedev->fd, VFIO_DEVICE_GET_REGULATOR_INFO, &reg_info);
+    if (ret) {
+        if (errno != ENOSPC)
+            goto err;
+
+        reg_info.usr_data = (uint64_t)g_renew(uint8_t, reg_info.usr_data,
+                                              reg_info.len);
+        ret = ioctl(vbasedev->fd, VFIO_DEVICE_GET_REGULATOR_INFO, &reg_info);
+        if (ret)
+            goto err;
+    }
+
+    return (char *)reg_info.usr_data;
+err:
+    error_setg_errno(errp, errno, "error getting regulator info");
+    return NULL;
+}
+
 /**
  * vfio_populate_device - Allocate and populate MMIO region
  * and IRQ structs according to driver returned information
@@ -496,7 +525,21 @@ static int vfio_populate_device(VFIODevice *vbasedev, Error **errp)
             }
         }
     }
+
+    vbasedev->regulator_names = g_new(char *, vbasedev->num_regulators);
+    for (i = 0; i < vbasedev->num_regulators; i++) {
+        vbasedev->regulator_names[i] = vfio_platform_get_regulator(vbasedev, i,
+                                                                   errp);
+        if (!vbasedev->regulator_names[i])
+            goto regulator_err;
+    }
+
+
     return 0;
+regulator_err:
+    for (i = 0; i < vbasedev->num_regulators; i++)
+        g_free(vbasedev->regulator_names[i]);
+    g_free(vbasedev->regulator_names);
 irq_err:
     timer_del(vdev->mmap_timer);
     QLIST_FOREACH_SAFE(intp, &vdev->intp_list, next, tmp) {

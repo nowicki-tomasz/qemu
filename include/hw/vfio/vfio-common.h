@@ -112,8 +112,10 @@ typedef struct VFIODevice {
     VFIODeviceOps *ops;
     unsigned int num_irqs;
     unsigned int num_regions;
-    unsigned int num_clks;
     unsigned int flags;
+    unsigned int num_clks;
+    unsigned int num_regulators;
+    char **regulator_names;
 } VFIODevice;
 
 struct VFIODeviceOps {

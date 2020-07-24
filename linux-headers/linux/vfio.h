@@ -202,8 +202,9 @@ struct vfio_device_info {
 #define VFIO_DEVICE_FLAGS_CCW	(1 << 4)	/* vfio-ccw device */
 #define VFIO_DEVICE_FLAGS_AP	(1 << 5)	/* vfio-ap device */
 	__u32	num_regions;	/* Max region index + 1 */
-	__u32	num_clks;	/* Max clock index + 1 */
 	__u32	num_irqs;	/* Max IRQ index + 1 */
+	__u32	num_clks;	/* Max clock index + 1 */
+	__u32   num_regulators; /* Max regulator index + 1 */
 };
 #define VFIO_DEVICE_GET_INFO		_IO(VFIO_TYPE, VFIO_BASE + 7)
 
@@ -707,6 +708,24 @@ struct vfio_device_ioeventfd {
 };
 
 #define VFIO_DEVICE_IOEVENTFD		_IO(VFIO_TYPE, VFIO_BASE + 16)
+
+/**
+ * VFIO_DEVICE_GET_REGULATOR_INFO - _IOWR(VFIO_TYPE, VFIO_BASE + 12,
+ *                     struct vfio_regulator_info)
+ *
+ * Retrieve information about a device regulators name.  Caller provides
+ * struct vfio_regulator_info with index value set.  Caller sets argsz,
+ * allocates buffer and sets its length.
+ * Return: 0 on success, -errno on failure. -ENOSPC means that caller
+ * should allocate more space for name buffer.
+ */
+struct vfio_regulator_info {
+    __u32   argsz;
+    __u32   index;      /* Regulator index */
+    __u64   usr_data;   /* Buffer for name */
+    __u64   len;        /* Buffer length */
+};
+#define VFIO_DEVICE_GET_REGULATOR_INFO      _IO(VFIO_TYPE, VFIO_BASE + 17)
 
 /* -------- API for Type1 VFIO IOMMU -------- */
 
