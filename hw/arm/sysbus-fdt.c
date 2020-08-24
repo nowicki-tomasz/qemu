@@ -630,10 +630,15 @@ static void copy_node_prop(void *host_fdt, void *guest_fdt, char *host_path,
         case PROP_WARN:
             warn_report("%s: Ignoring %s property", host_path, name);
         case PROP_IGNORE:
+            error_report("%s name %s ignored", __func__, name);
+
             break;
 
         case PROP_COPY:
             qemu_fdt_setprop(guest_fdt, guest_path, name, data, len);
+
+            error_report("%s name %s copied", __func__, name);
+
             break;
 
         case PROP_REJECT:
@@ -772,37 +777,108 @@ static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
                            GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
 }
 
-//static void fdt_build_virtio_regulator_mmio_node(PlatformBusFDTData *data,
-//                                                 VFIOPlatformDevice *vdev,
-//                                                 int index,
-//                                                 void *guest_fdt,
-//                                                 uint32_t guest_clk_phandle)
-//{
-//    const char *parent_node = data->pbus_node_name;
-//    uint64_t mmio_base, mmio_size;
-//    uint32_t reg_attr[2];
-//    char *regulator_node_name;
-//    int irq;
-//
-//    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
-//                       VIRTIO_ID_REGULATOR);
-//
-//    regulator_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
-//                                    "virtio_mmio", mmio_base);
-//    qemu_fdt_add_subnode(guest_fdt, regulator_node_name);
-//    qemu_fdt_setprop_string(guest_fdt, regulator_node_name, "compatible",
-//                            "virtio,mmio");
-//    qemu_fdt_setprop_cell(guest_fdt, regulator_node_name, "phandle",
-//                          guest_clk_phandle);
-//
-//    reg_attr[0] = cpu_to_be32(mmio_base);
-//    reg_attr[1] = cpu_to_be32(mmio_size);
-//    qemu_fdt_setprop(guest_fdt, regulator_node_name, "reg", reg_attr,
-//                     2 * sizeof(uint32_t));
-//    qemu_fdt_setprop_cells(guest_fdt, regulator_node_name, "interrupts",
-//                           GIC_FDT_IRQ_TYPE_SPI, irq,
-//                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
-//}
+static ProppertList mvrl_armada_sdhci_regulator_properties[] = {
+    { "compatible",              PROP_IGNORE },
+    { "phandle",                 PROP_IGNORE },
+
+    { "name",                    PROP_COPY },
+    { "regulator-always-on",     PROP_COPY },
+    { "regulator-max-microvolt", PROP_COPY },
+    { "regulator-min-microvolt", PROP_COPY },
+    { "regulator-name",          PROP_COPY },
+    { "status",                  PROP_COPY },
+
+    { NULL,                      PROP_IGNORE },  /* last element */
+};
+
+static void copy_host_regulator_node_prop(char *sysfsdev,
+                                          void *fdt_guest,
+                                          char *node_name)
+{
+    char *tmp, sysfs_node_path[PATH_MAX], *root_node_path;
+    char path_delimit[] = "devicetree/base";
+    void *fdt_host;
+    ssize_t len;
+
+    error_report("%s sysfsdev %s", __func__, sysfsdev);
+
+    /*
+     * It is perfectly legal to have two nodes with the same name and
+     * compatible, therefore for lookup we need to deal with full DTS path.
+     */
+    tmp = g_strdup_printf("%s/of_node", sysfsdev);
+    len = readlink(tmp, sysfs_node_path, sizeof(sysfs_node_path));
+    g_free(tmp);
+
+    if (len < 0 || len >= sizeof(sysfs_node_path)) {
+        error_report("no of_node found for %s", sysfsdev);
+        exit(1);
+    }
+
+    error_report("%s sysfs_node_path %s",
+                         __func__, sysfs_node_path);
+
+    sysfs_node_path[len] = 0;
+    root_node_path = strstr(sysfs_node_path, path_delimit);
+    /* Skip delimiter to have root based DTS path */
+    root_node_path += strlen(path_delimit);
+
+    error_report("%s root_node_path %s",
+                         __func__, root_node_path);
+
+    fdt_host = load_device_tree_from_sysfs();
+
+    error_report("\n\n\n\n %s -------------------------", __func__);
+
+    /* Copy whitelist properties from host */
+    copy_node_prop(fdt_host, fdt_guest, root_node_path, node_name,
+                   mvrl_armada_sdhci_regulator_properties);
+
+    error_report("\n\n\n\n %s -------------------------", __func__);
+
+    g_free(fdt_host);
+}
+
+static void fdt_build_virtio_regulator_mmio_node(PlatformBusFDTData *data,
+                                                 VFIOPlatformDevice *vdev,
+                                                 int index,
+                                                 void *guest_fdt,
+                                                 uint32_t guest_phandle,
+                                                 char *regulator_name)
+{
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    const char *parent_node = data->pbus_node_name;
+    uint64_t mmio_base, mmio_size;
+    uint32_t reg_attr[2];
+    char *regulator_node_name;
+    char *regulator_node_path;
+    int irq;
+
+    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
+                       VIRTIO_ID_REGULATOR);
+
+    regulator_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                    "virtio_mmio", mmio_base);
+    qemu_fdt_add_subnode(guest_fdt, regulator_node_name);
+    qemu_fdt_setprop_string(guest_fdt, regulator_node_name, "compatible",
+                            "virtio,mmio");
+    qemu_fdt_setprop_cell(guest_fdt, regulator_node_name, "phandle",
+                          guest_phandle);
+
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(mmio_size);
+    qemu_fdt_setprop(guest_fdt, regulator_node_name, "reg", reg_attr,
+                     2 * sizeof(uint32_t));
+    qemu_fdt_setprop_cells(guest_fdt, regulator_node_name, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+
+    regulator_node_path = g_strdup_printf("%s/%s-%s", vbasedev->sysfsdev,
+                                          vbasedev->name, regulator_name);
+
+    copy_host_regulator_node_prop(regulator_node_path, guest_fdt,
+                                  regulator_node_name);
+}
 
 static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
@@ -874,21 +950,25 @@ static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
     }
     g_free(guest_clk_phandle);
 
-//    guest_clk_phandle = g_new(uint32_t, vbasedev->num_regulators);
-//    for (i = 0; i < vbasedev->num_regulators;  i++) {
-//        char *supply_name;
-//
-//        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
-//        fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt_guest,
-//                                             guest_clk_phandle[i]);
-//        supply_name = g_strdup_printf("%s-supply",
-//                                      vbasedev->regulator_names[i]);
-//        qemu_fdt_setprop_cell(fdt_guest, node_name, supply_name,
-//                              guest_clk_phandle[i]);
-//        /* TODO: copy regulator's properties/constrains */
-//    }
-//
-//    g_free(guest_clk_phandle);
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_regulators);
+    for (i = 0; i < vbasedev->num_regulators;  i++) {
+        char *supply_name;
+
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt_guest,
+                                             guest_clk_phandle[i],
+                                             vbasedev->regulator_names[i]);
+        supply_name = g_strdup_printf("%s-supply",
+                                      vbasedev->regulator_names[i]);
+
+        error_report("%s copying properties of regulator name %s",
+                     __func__, supply_name);
+
+        qemu_fdt_setprop_cell(fdt_guest, node_name, supply_name,
+                              guest_clk_phandle[i]);
+    }
+
+    g_free(guest_clk_phandle);
     g_free(reg_attr);
     g_free(node_name);
     return 0;

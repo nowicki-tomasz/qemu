@@ -228,19 +228,19 @@ static void vhost_vfio_plat_device_realize(DeviceState *dev, Error **errp)
     int ret, vhostfd = -1;
 
     if (!s->device_id) {
-        error_setg(errp, "vhost-vfio: dev type undefined: %s",
+        error_setg(errp, "vhost-pipe: dev type undefined: %s",
                    strerror(-EINVAL));
         return;
     }
 
-    vhostfd = open("/dev/vhost-vfio", O_RDWR);
+    vhostfd = open("/dev/vhost-pipe", O_RDWR);
     if (vhostfd < 0) {
-        error_setg(errp, "vhost-vfio: open vhost char device failed: %s",
+        error_setg(errp, "vhost-pipe: open vhost char device failed: %s",
                    strerror(errno));
         return;
     }
 
-    virtio_init(vdev, "vhost-vfio", s->device_id, 0);
+    virtio_init(vdev, "vhost-pipe", s->device_id, 0);
     s->req_vq = virtio_add_queue(vdev, VHOST_VFIO_PLAT_DEFAULT_QUEUE_SIZE,
                                  vhost_dummy_handle_comman);
     s->event_vq = virtio_add_queue(vdev, VHOST_VFIO_PLAT_DEFAULT_QUEUE_SIZE, NULL);
@@ -252,7 +252,7 @@ static void vhost_vfio_plat_device_realize(DeviceState *dev, Error **errp)
     ret = vhost_dev_init(&s->dev, (void *)(uintptr_t)vhostfd,
                          VHOST_BACKEND_TYPE_KERNEL, 0);
     if (ret < 0) {
-        error_setg(errp, "vhost-vfio: vhost initialization failed: %s",
+        error_setg(errp, "vhost-pipe: vhost initialization failed: %s",
                    strerror(-ret));
         goto err_virtio;
     }
@@ -264,7 +264,7 @@ static void vhost_vfio_plat_device_realize(DeviceState *dev, Error **errp)
     info.vhost_dev_type = s->device_id;
     ret = vhost_dev_set_vfio_fd(s, &info);
     if (ret < 0) {
-        error_setg_errno(errp, -ret, "vhost-vfio: unable to set VFIO fd");
+        error_setg_errno(errp, -ret, "vhost-pipe: unable to set VFIO fd");
         goto err_vhost_dev;
     }
 
