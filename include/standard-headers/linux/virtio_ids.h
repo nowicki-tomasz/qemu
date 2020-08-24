@@ -46,7 +46,7 @@
 #define VIRTIO_ID_IOMMU        23 /* virtio IOMMU */
 #define VIRTIO_ID_FS           26 /* virtio filesystem */
 #define VIRTIO_ID_PMEM         27 /* virtio pmem */
-#define VIRTIO_ID_CLK          28 /* virtio clock */
-#define VIRTIO_ID_REGULATOR    29 /* virtio regulator */
+#define VIRTIO_ID_CLK          32 /* virtio clock */
+#define VIRTIO_ID_REGULATOR    33 /* virtio regulator */
 
 #endif /* _LINUX_VIRTIO_IDS_H */
