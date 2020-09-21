@@ -83,6 +83,11 @@ typedef struct HostProperty {
     bool optional;
 } HostProperty;
 
+static bool gmu_created = false;
+static bool gpu_created = false;
+static uint32_t gmu_phandle;
+static char gpu_node_name[100];
+
 #ifdef CONFIG_LINUX
 
 /**
@@ -605,6 +610,7 @@ static void copy_node_prop(void *host_fdt, void *guest_fdt, char *host_path,
         exit(1);
     }
 
+    /* MICAH this is the child node not supported thing */
     /* Subnodes are not yet supported, ignore */
     if (fdt_first_subnode(host_fdt, node) >= 0) {
         warn_report("%s has unsupported subnodes", host_path);
@@ -740,6 +746,7 @@ static void fdt_virtio_realize(PlatformBusFDTData *data,
     *mmio_size = memory_region_size(mr);
     *irq_number = platform_bus_get_irqn(pbus, SYS_BUS_DEVICE(proxy_dev), 0) +
                                                               data->irq_start;
+    // MICAH should print number here to see whats going on
 }
 
 static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
@@ -765,6 +772,7 @@ static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
     qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "#clock-cells", 0);
     qemu_fdt_setprop_string(guest_fdt, clk_node_name, "clock-output-names",
                             "mmio_clock_output");
+    // MICAH so we do a line like this when we want a node to have a phandle i guess
     qemu_fdt_setprop_cell(guest_fdt, clk_node_name, "phandle",
                           guest_clk_phandle);
 
@@ -775,6 +783,7 @@ static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
     qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "interrupts",
                            GIC_FDT_IRQ_TYPE_SPI, irq,
                            GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+    // MICAH or could just look at the DT node that gets created
 }
 
 static ProppertList mvrl_armada_sdhci_regulator_properties[] = {
@@ -1070,6 +1079,94 @@ static ProppertList qcom_trogdor_sdhci_properties[] = {
     { NULL,              PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_gpu_properties[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    /* The following are copied and remapped by dedicated code */
+    { "reg",             PROP_IGNORE },
+    { "interrupts",      PROP_IGNORE },
+    { "clocks",          PROP_IGNORE },
+    { "*-supply",        PROP_IGNORE },
+    { "qcom,gmu",        PROP_IGNORE },
+
+    /* The following are handled by the host */
+    { "power-domains",   PROP_IGNORE }, /* power management (+ opt. clocks) */
+    { "iommus",          PROP_IGNORE }, /* isolation */
+    { "resets",          PROP_IGNORE }, /* isolation */
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+
+    /* Ignoring the following may or may not work, hence the warning */
+    { "gpio-ranges",     PROP_WARN },   /* no support for pinctrl yet */
+    { "dmas",            PROP_WARN },   /* no support for external DMACs yet */
+
+    /* The following are irrelevant, as corresponding specifiers are ignored */
+    { "reset-names",     PROP_IGNORE },
+    { "dma-names",       PROP_IGNORE },
+
+    /* Qualcomm GPU specific, TODO: add this in */
+    { "operating-points-v2",   PROP_IGNORE },
+    { "interconnects",         PROP_IGNORE },
+    { "interconnect-names",    PROP_IGNORE },
+    { "opp-table",             PROP_IGNORE }, /* TODO: not sure if we need this line since its a subnode rather than field. The sdhci one above doesn't have this line. */
+
+
+    /* Whitelist of properties not taking phandles, and thus safe to copy */
+    { "clock-names",     PROP_COPY },
+    { "compatible",      PROP_COPY },
+    { "status",          PROP_COPY },
+    { "reg-names",       PROP_COPY },
+    { "interrupt-names", PROP_COPY },
+    { "#*-cells",        PROP_COPY },
+    { "dma-coherent",    PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
+static ProppertList qcom_trogdor_gmu_properties[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    /* The following are copied and remapped by dedicated code */
+    { "reg",             PROP_IGNORE },
+    { "interrupts",      PROP_IGNORE },
+    { "clocks",          PROP_IGNORE },
+    { "*-supply",        PROP_IGNORE },
+
+    /* The following are handled by the host */
+    { "power-domain*",   PROP_IGNORE }, /* power management (+ opt. clocks) */
+    { "iommus",          PROP_IGNORE }, /* isolation */
+    { "resets",          PROP_IGNORE }, /* isolation */
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+
+    /* Ignoring the following may or may not work, hence the warning */
+    { "gpio-ranges",     PROP_WARN },   /* no support for pinctrl yet */
+    { "dmas",            PROP_WARN },   /* no support for external DMACs yet */
+
+    /* The following are irrelevant, as corresponding specifiers are ignored */
+    { "reset-names",     PROP_IGNORE },
+    { "dma-names",       PROP_IGNORE },
+
+    /* Qualcomm SDHCI specific TODO make this work */
+    { "operating-points-v2",   PROP_IGNORE },
+    { "opp-table",             PROP_IGNORE }, /* TODO: not sure if we need this line since its a subnode rather than field. The sdhci one above doesn't have this line. */
+
+
+    /* Whitelist of properties not taking phandles, and thus safe to copy */
+    { "clock-names",     PROP_COPY },
+    { "compatible",      PROP_COPY },
+    { "status",          PROP_COPY },
+    { "reg-names",       PROP_COPY },
+    { "interrupt-names", PROP_COPY },
+    { "#*-cells",        PROP_COPY },
+    { "dma-coherent",    PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
+
 static ProppertList qcom_trogdor_regulator_properties[] = {
     { "compatible",              PROP_IGNORE },
     { "phandle",                 PROP_IGNORE },
@@ -1082,6 +1179,7 @@ static ProppertList qcom_trogdor_regulator_properties[] = {
     { NULL,                      PROP_IGNORE },  /* last element */
 };
 
+// MICAH hook into this for qcom geni se
 static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
 {
@@ -1177,6 +1275,276 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
     return 0;
 }
 
+
+
+
+
+static int add_qcom_trogdor_fdt_gpu_node(SysBusDevice *sbdev, void *opaque,
+                                   ProppertList *properties)
+{
+    PlatformBusFDTData *data = opaque;
+    const char *parent_node = data->pbus_node_name;
+    PlatformBusDevice *pbus = data->pbus;
+    void *fdt_guest = data->fdt;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    uint32_t *reg_attr, *irq_attr;
+    char *node_name;
+    char *subnode_name;
+    char *subsubnode1_name;
+    char *subsubnode2_name;
+    char *subsubnode3_name;
+    char *subsubnode4_name;
+    char *subsubnode5_name;
+    char *subsubnode6_name;
+    char *subsubnode7_name; 
+    uint64_t mmio_base;
+    int i, irq_number;
+    VFIOINTp *intp;
+    uint32_t subnode_phandle;
+
+    error_report("MICAH in add_qcom_trogdor_fdt_gpu_node\n");
+
+    mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
+    node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                vbasedev->name, mmio_base);
+
+    strncpy(gpu_node_name, node_name, 100);
+    error_report("MICAH gpu_node_name is now: %s\n", gpu_node_name);
+
+    qemu_fdt_add_subnode(fdt_guest, node_name);
+    copy_host_node_prop(vdev, fdt_guest, node_name, properties);
+
+    //if (gmu_created) {
+        // we know gmu node has been created if we've gotten here
+        //qemu_fdt_setprop(fdt_guest, node_name, "qcom,gmu", 0x48, sizeof(uint32_t));
+    //}
+
+    subnode_name = g_strdup_printf("%s/opp-table", node_name);
+    error_report("MICAH opp-table subnode name is: %s\n", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subnode_name);
+    qemu_fdt_setprop_string(fdt_guest, subnode_name, "compatible", "operating-points-v2"); 
+
+    subnode_phandle = qemu_fdt_alloc_phandle(fdt_guest);
+    qemu_fdt_setprop_cell(fdt_guest, subnode_name, "phandle", subnode_phandle);
+    subnode_phandle = cpu_to_be32(subnode_phandle);
+    qemu_fdt_setprop(fdt_guest, node_name, "operating-points-v2", &subnode_phandle, sizeof(uint32_t));
+
+    subsubnode1_name = g_strdup_printf("%s/opp-650000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode1_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode1_name, "opp-level", 0x140);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode1_name, "opp-peak-kBps", 0x6e1b80);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode1_name, "opp-hz", 0, 0x26be3680);
+
+    subsubnode2_name = g_strdup_printf("%s/opp-180000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode2_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode2_name, "opp-level", 0x30);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode2_name, "opp-peak-kBps", 0x1b86e0);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode2_name, "opp-hz", 0, 0xaba9500);
+
+    subsubnode3_name = g_strdup_printf("%s/opp-355000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode3_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode3_name, "opp-level", 0x80);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode3_name, "opp-peak-kBps", 0x2ee000);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode3_name, "opp-hz", 0, 0x1528dec0);
+
+    subsubnode4_name = g_strdup_printf("%s/opp-267000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode4_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode4_name, "opp-level", 0x40);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode4_name, "opp-peak-kBps", 0x2ee000);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode4_name, "opp-hz", 0, 0xfea18c0);
+
+    subsubnode5_name = g_strdup_printf("%s/opp-430000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode5_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode5_name, "opp-level", 0xc0);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode5_name, "opp-peak-kBps", 0x5294a0);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode5_name, "opp-hz", 0, 0x19a14780);
+
+    subsubnode6_name = g_strdup_printf("%s/opp-565000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode6_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode6_name, "opp-level", 0x100);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode6_name, "opp-peak-kBps", 0x5294a0);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode6_name, "opp-hz", 0, 0x21ad3740);
+
+    subsubnode7_name = g_strdup_printf("%s/opp-800000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode7_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode7_name, "opp-level", 0x180);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode7_name, "opp-peak-kBps", 0x823020);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode7_name, "opp-hz", 0, 0x2faf0800);
+
+    /* Copy reg (remapped) */
+    reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
+    for (i = 0; i < vbasedev->num_regions; i++) {
+        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
+        reg_attr[2 * i] = cpu_to_be32(mmio_base);
+        reg_attr[2 * i + 1] = cpu_to_be32(
+                                memory_region_size(vdev->regions[i]->mem));
+    }
+    qemu_fdt_setprop(fdt_guest, node_name, "reg", reg_attr,
+                     vbasedev->num_regions * 2 * sizeof(uint32_t));
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(fdt_guest, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    gpu_created = true;
+
+    g_free(reg_attr);
+    g_free(node_name);
+    return 0;
+}
+
+
+
+// MICAH still need to be able to call these separately or in wrong order.
+// just construct gmu node to alloc phandle, in gpu node look for gmu node
+// in the guest fdt (if this is possible?) and make sure it gets created
+// if not. I guess this means in gmu node creation callback you need to
+// check whether gmu node has already been created
+
+
+
+static int add_qcom_trogdor_fdt_gmu_node(SysBusDevice *sbdev, void *opaque,
+                                   ProppertList *properties)
+{
+    PlatformBusFDTData *data = opaque;
+    const char *parent_node = data->pbus_node_name;
+    PlatformBusDevice *pbus = data->pbus;
+    void *fdt_guest = data->fdt;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    uint32_t *reg_attr, *irq_attr, *guest_clk_phandle;
+    char *node_name;
+    char *subnode_name;
+    char *subsubnode_name;
+    uint64_t mmio_base;
+    int i, irq_number;
+    VFIOINTp *intp;
+    uint32_t guest_phandle;
+    uint32_t subnode_phandle;
+
+    error_report("MICAH in add_qcom_trogdor_fdt_gmu_node\n");
+    
+    mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
+    node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                vbasedev->name, mmio_base);
+
+    qemu_fdt_add_subnode(fdt_guest, node_name);
+    copy_host_node_prop(vdev, fdt_guest, node_name, properties);
+
+    guest_phandle = qemu_fdt_alloc_phandle(fdt_guest);
+    // TODO: should use qemu_fdt_setprop_phandle instead
+    qemu_fdt_setprop_cell(fdt_guest, node_name, "phandle", guest_phandle);
+    gmu_created = true;
+    gmu_phandle = cpu_to_be32(guest_phandle);
+
+    if (gpu_created) {
+        error_report("MICAH about to do setprop for gmu node. gpu_node_name: %s, gpu_phandle: %p\n", gpu_node_name, gmu_phandle);
+        qemu_fdt_setprop(fdt_guest, gpu_node_name, "qcom,gmu", &gmu_phandle, sizeof(uint32_t));
+    }
+
+    subnode_name = g_strdup_printf("%s/opp-table", node_name);
+    error_report("MICAH opp-table subnode name is: %s\n", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subnode_name);
+    qemu_fdt_setprop_string(fdt_guest, subnode_name, "compatible", "operating-points-v2"); 
+
+    subnode_phandle = qemu_fdt_alloc_phandle(fdt_guest);
+    qemu_fdt_setprop_cell(fdt_guest, subnode_name, "phandle", subnode_phandle);
+    subnode_phandle = cpu_to_be32(subnode_phandle);
+    qemu_fdt_setprop(fdt_guest, node_name, "operating-points-v2", &subnode_phandle, sizeof(uint32_t));
+
+    subsubnode_name = g_strdup_printf("%s/opp-200000000", subnode_name);
+    qemu_fdt_add_subnode(fdt_guest, subsubnode_name);
+    qemu_fdt_setprop_cell(fdt_guest, subsubnode_name, "opp-level", 0x30);
+    qemu_fdt_setprop_cells(fdt_guest, subsubnode_name, "opp-hz", 0, 0xbebc200);
+
+
+    /* Copy reg (remapped) */
+    reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
+    for (i = 0; i < vbasedev->num_regions; i++) {
+        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
+        reg_attr[2 * i] = cpu_to_be32(mmio_base);
+        reg_attr[2 * i + 1] = cpu_to_be32(
+                                memory_region_size(vdev->regions[i]->mem));
+    }
+    qemu_fdt_setprop(fdt_guest, node_name, "reg", reg_attr,
+                     vbasedev->num_regions * 2 * sizeof(uint32_t));
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(fdt_guest, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_clks);
+    for (i = 0; i < vbasedev->num_clks;  i++) {
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_clk_mmio_node(data, vdev, i, fdt_guest,
+                                       guest_clk_phandle[i]);
+        guest_clk_phandle[i] = cpu_to_be32(guest_clk_phandle[i]);
+    }
+    if (vbasedev->num_clks > 0) {
+        qemu_fdt_setprop(fdt_guest, node_name, "clocks", guest_clk_phandle,
+                         vbasedev->num_clks * sizeof(uint32_t));
+    }
+    g_free(guest_clk_phandle);
+
+    g_free(reg_attr);
+    g_free(node_name);
+
+    error_report("MICAH finished add_qcom_trogdor_fdt_gmu_node\n");
+
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
 /* DT compatible matching */
 static bool vfio_platform_match(SysBusDevice *sbdev,
                                 const BindingEntry *entry)
@@ -1263,6 +1631,12 @@ static const BindingEntry bindings[] = {
             add_qcom_trogdor_fdt_node, qcom_trogdor_wifi_properties),
     VFIO_PLATFORM_BINDING("qcom,sdhci-msm-v5",
             add_qcom_trogdor_fdt_node, qcom_trogdor_sdhci_properties),
+    VFIO_PLATFORM_BINDING("qcom,adreno",
+            add_qcom_trogdor_fdt_gpu_node, qcom_trogdor_gpu_properties),
+    VFIO_PLATFORM_BINDING("qcom,adreno-gmu",
+            add_qcom_trogdor_fdt_gmu_node, qcom_trogdor_gmu_properties),
+
+
 #endif
     TYPE_BINDING(TYPE_TPM_TIS_SYSBUS, add_tpm_tis_fdt_node),
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
