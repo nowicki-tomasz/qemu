@@ -1070,6 +1070,50 @@ static ProppertList qcom_trogdor_sdhci_properties[] = {
     { NULL,              PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_xhci_properties[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    /* The following are copied and remapped by dedicated code */
+    { "reg",             PROP_IGNORE },
+    { "interrupts",      PROP_IGNORE },
+    { "clocks",          PROP_IGNORE },
+    { "*-supply",        PROP_IGNORE },
+
+    /* The following are handled by the host */
+    { "power-domains",   PROP_IGNORE }, /* power management (+ opt. clocks) */
+    { "iommus",          PROP_IGNORE }, /* isolation */
+    { "resets",          PROP_IGNORE }, /* isolation */
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+
+    /* Ignoring the following may or may not work, hence the warning */
+    { "gpio-ranges",     PROP_WARN },   /* no support for pinctrl yet */
+    { "dmas",            PROP_WARN },   /* no support for external DMACs yet */
+
+    /* The following are irrelevant, as corresponding specifiers are ignored */
+    { "reset-names",     PROP_IGNORE },
+    { "dma-names",       PROP_IGNORE },
+    { "phys",            PROP_IGNORE },
+    { "phy-names",       PROP_IGNORE },
+
+    /* Whitelist of properties not taking phandles, and thus safe to copy */
+    { "compatible",      PROP_COPY },
+    { "status",          PROP_COPY },
+    { "reg-names",       PROP_COPY },
+    { "interrupt-names", PROP_COPY },
+    { "#*-cells",        PROP_COPY },
+    { "dma-coherent",    PROP_COPY },
+
+    /* Qualcomm Wifi specific */
+    { "snps,dis_u2_susphy_quirk", PROP_COPY },
+    { "snps,dis_enblslpm_quirk",  PROP_COPY },
+    { "maximum-speed",            PROP_COPY },
+    { "dr_mode",                  PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
 static ProppertList qcom_trogdor_regulator_properties[] = {
     { "compatible",              PROP_IGNORE },
     { "phandle",                 PROP_IGNORE },
@@ -1263,6 +1307,8 @@ static const BindingEntry bindings[] = {
             add_qcom_trogdor_fdt_node, qcom_trogdor_wifi_properties),
     VFIO_PLATFORM_BINDING("qcom,sdhci-msm-v5",
             add_qcom_trogdor_fdt_node, qcom_trogdor_sdhci_properties),
+    VFIO_PLATFORM_BINDING("snps,dwc3",
+            add_qcom_trogdor_fdt_node, qcom_trogdor_xhci_properties),
 #endif
     TYPE_BINDING(TYPE_TPM_TIS_SYSBUS, add_tpm_tis_fdt_node),
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
