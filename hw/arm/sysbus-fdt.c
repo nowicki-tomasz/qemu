@@ -786,6 +786,39 @@ static void fdt_build_virtio_clk_mmio_node(PlatformBusFDTData *data,
     // MICAH or could just look at the DT node that gets created
 }
 
+static void fdt_build_virtio_phy_mmio_node(PlatformBusFDTData *data,
+                                           VFIOPlatformDevice *vdev,
+                                           int index,
+                                           void *guest_fdt,
+                                           uint32_t guest_clk_phandle)
+{
+    const char *parent_node = data->pbus_node_name;
+    uint64_t mmio_base, mmio_size;
+    uint32_t reg_attr[2];
+    char *clk_node_name;
+    int irq;
+
+    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
+                           VIRTIO_ID_PHY);
+
+    clk_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                    "virtio_mmio", mmio_base);
+    qemu_fdt_add_subnode(guest_fdt, clk_node_name);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "compatible",
+                            "virtio,mmio");
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "#phy-cells", 0);
+    qemu_fdt_setprop_cell(guest_fdt, clk_node_name, "phandle",
+                          guest_clk_phandle);
+
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(mmio_size);
+    qemu_fdt_setprop(guest_fdt, clk_node_name, "reg", reg_attr,
+                     2 * sizeof(uint32_t));
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+}
+
 static void fdt_build_virtio_inter_mmio_node(PlatformBusFDTData *data,
                                             VFIOPlatformDevice *vdev,
                                             int index,
@@ -1318,6 +1351,20 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
     if (vbasedev->num_interconnects > 0) {
         qemu_fdt_setprop(fdt_guest, node_name, "interconnects", guest_clk_phandle,
                          vbasedev->num_interconnects * sizeof(uint32_t) * 4);
+    }
+
+    g_free(guest_clk_phandle);
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_phys);
+    for (i = 0; i < vbasedev->num_phys;  i++) {
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_phy_mmio_node(data, vdev, i, fdt_guest,
+                                       guest_clk_phandle[i]);
+        guest_clk_phandle[i] = cpu_to_be32(guest_clk_phandle[i]);
+    }
+    if (vbasedev->num_phys > 0) {
+        qemu_fdt_setprop(fdt_guest, node_name, "phys", guest_clk_phandle,
+                         vbasedev->num_phys * sizeof(uint32_t));
     }
 
     g_free(guest_clk_phandle);

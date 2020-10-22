@@ -206,6 +206,7 @@ struct vfio_device_info {
 	__u32	num_clks;	/* Max clock index + 1 */
 	__u32   num_regulators; /* Max regulator index + 1 */
     __u32   num_interconnects; /* Max interconnect index + 1 */
+    __u32   num_phys;   /* Max phy index + 1 */
 };
 #define VFIO_DEVICE_GET_INFO		_IO(VFIO_TYPE, VFIO_BASE + 7)
 
