@@ -116,6 +116,7 @@ typedef struct VFIODevice {
     unsigned int flags;
     unsigned int num_clks;
     unsigned int num_regulators;
+    unsigned int num_interconnects;
     char **regulator_names;
 } VFIODevice;
 

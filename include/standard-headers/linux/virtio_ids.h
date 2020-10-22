@@ -48,5 +48,6 @@
 #define VIRTIO_ID_PMEM         27 /* virtio pmem */
 #define VIRTIO_ID_CLK          32 /* virtio clock */
 #define VIRTIO_ID_REGULATOR    33 /* virtio regulator */
+#define VIRTIO_ID_INTERCONNECT 34 /* virtio interconnect */
 
 #endif /* _LINUX_VIRTIO_IDS_H */
