@@ -1629,6 +1629,7 @@ int vfio_get_device(VFIOGroup *group, const char *name,
     vbasedev->num_regulators = dev_info.num_regulators;
     vbasedev->num_interconnects = dev_info.num_interconnects;
     vbasedev->num_phys = dev_info.num_phys;
+    vbasedev->num_pctrl_states = dev_info.num_pctrl_states;
 
     error_report("%s irq %d regions %d clocks %d regulators %d inter %d phys %d",
             __func__,

@@ -819,6 +819,44 @@ static void fdt_build_virtio_phy_mmio_node(PlatformBusFDTData *data,
                            GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
 }
 
+static void fdt_build_virtio_pinctrl_mmio_node(PlatformBusFDTData *data,
+                                           VFIOPlatformDevice *vdev,
+                                           int index,
+                                           void *guest_fdt,
+                                           uint32_t guest_clk_phandle)
+{
+    const char *parent_node = data->pbus_node_name;
+    uint64_t mmio_base, mmio_size;
+    uint32_t reg_attr[2];
+    char *clk_node_name;
+    int irq;
+
+    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
+                       VIRTIO_ID_PINCTRL);
+
+    clk_node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                    "virtio_mmio", mmio_base);
+    qemu_fdt_add_subnode(guest_fdt, clk_node_name);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "compatible",
+                            "virtio,mmio");
+
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(mmio_size);
+    qemu_fdt_setprop(guest_fdt, clk_node_name, "reg", reg_attr,
+                     2 * sizeof(uint32_t));
+    qemu_fdt_setprop_cells(guest_fdt, clk_node_name, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+
+    /* State subnode */
+    clk_node_name = g_strdup_printf("%s/state_0", clk_node_name);
+    qemu_fdt_add_subnode(guest_fdt, clk_node_name);
+    qemu_fdt_setprop_string(guest_fdt, clk_node_name, "pins", "gpio0");
+    qemu_fdt_setprop(guest_fdt, clk_node_name, "bias-disable", "", 0);
+    qemu_fdt_setprop_cell(guest_fdt, clk_node_name, "phandle",
+                          guest_clk_phandle);
+}
+
 static void fdt_build_virtio_inter_mmio_node(PlatformBusFDTData *data,
                                             VFIOPlatformDevice *vdev,
                                             int index,
@@ -1111,6 +1149,7 @@ static ProppertList qcom_trogdor_sdhci_properties[] = {
     { "power-domains",   PROP_IGNORE }, /* power management (+ opt. clocks) */
     { "iommus",          PROP_IGNORE }, /* isolation */
     { "resets",          PROP_IGNORE }, /* isolation */
+    { "pinctrl-names",   PROP_COPY },
     { "pinctrl-*",       PROP_IGNORE }, /* pin control */
 
     /* Ignoring the following may or may not work, hence the warning */
@@ -1458,6 +1497,22 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
     if (vbasedev->num_phys > 0) {
         qemu_fdt_setprop(fdt_guest, node_name, "phys", guest_clk_phandle,
                          vbasedev->num_phys * sizeof(uint32_t));
+    }
+    g_free(guest_clk_phandle);
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_pctrl_states);
+    for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
+        char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
+
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt_guest,
+                                           guest_clk_phandle[i]);
+
+        error_report("%s copying properties of regulator name %s",
+                     __func__, pinctrl_name);
+
+        qemu_fdt_setprop_cell(fdt_guest, node_name, pinctrl_name,
+                              guest_clk_phandle[i]);
     }
 
     g_free(guest_clk_phandle);

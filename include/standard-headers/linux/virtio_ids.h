@@ -50,5 +50,6 @@
 #define VIRTIO_ID_REGULATOR    33 /* virtio regulator */
 #define VIRTIO_ID_INTERCONNECT 34 /* virtio interconnect */
 #define VIRTIO_ID_PHY          35 /* virtio phy */
+#define VIRTIO_ID_PINCTRL      36 /* virtio pinctrl */
 
 #endif /* _LINUX_VIRTIO_IDS_H */
