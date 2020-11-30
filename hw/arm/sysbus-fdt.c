@@ -1411,6 +1411,32 @@ static ProppertList qcom_trogdor_geni_uart_prop[] = {
     { NULL,              PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_geni_i2c_prop[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    /* The following are copied and remapped by dedicated code */
+    { "reg",             PROP_IGNORE },
+    { "interrupts",      PROP_IGNORE },
+    { "clocks",          PROP_IGNORE },
+
+    /* The following are handled by the host */
+    { "pinctrl-names",   PROP_COPY },
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+    { "interconnects",   PROP_IGNORE },
+
+    /* Whitelist of properties not taking phandles, and thus safe to copy */
+    { "clock-names",     PROP_COPY },
+    { "interconnect-names", PROP_COPY },
+    { "compatible",      PROP_COPY },
+    { "status",          PROP_COPY },
+    { "#*-cells",        PROP_COPY },
+    { "clock-frequency", PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
 static ProppertList qcom_trogdor_geni_bluetooth_prop[] = {
     { "name",             PROP_IGNORE }, /* handled automatically */
     { "phandle",          PROP_IGNORE }, /* not needed for the generic case */
@@ -1426,6 +1452,26 @@ static ProppertList qcom_trogdor_geni_bluetooth_prop[] = {
     { NULL,               PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_geni_touchscreen_prop[] = {
+    { "name",             PROP_IGNORE }, /* handled automatically */
+    { "phandle",          PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",    PROP_IGNORE }, /* not needed for the generic case */
+
+    { "interrupt-parent", PROP_IGNORE },
+    { "interrupts",       PROP_IGNORE },
+    { "*-supply",         PROP_IGNORE },
+    { "pinctrl-names",    PROP_COPY },
+    { "pinctrl-*",        PROP_IGNORE }, /* pin control */
+
+    { "compatible",       PROP_COPY },
+    { "status",           PROP_COPY },
+    { "hid-descr-addr",   PROP_COPY },
+    { "post-power-on-delay-ms",        PROP_COPY },
+    { "reg",              PROP_COPY },
+
+    { NULL,               PROP_IGNORE },  /* last element */
+};
+
 
 static ProppertList qcom_trogdor_regulator_properties[] = {
     { "compatible",              PROP_IGNORE },
@@ -1435,6 +1481,23 @@ static ProppertList qcom_trogdor_regulator_properties[] = {
     { "regulator-initial-mode",  PROP_COPY },
     { "regulator-max-microvolt", PROP_COPY },
     { "regulator-min-microvolt", PROP_COPY },
+
+    { NULL,                      PROP_IGNORE },  /* last element */
+};
+
+static ProppertList qcom_trogdor_regulator_touchscreen_properties[] = {
+    { "compatible",              PROP_IGNORE },
+    { "phandle",                 PROP_IGNORE },
+
+    { "name",                    PROP_COPY },
+    { "regulator-name",          PROP_COPY },
+    { "regulator-max-microvolt", PROP_COPY },
+    { "regulator-min-microvolt", PROP_COPY },
+
+    { "enable-active-high", PROP_COPY },
+    { "gpio",               PROP_IGNORE },
+    { "pinctrl-*",          PROP_IGNORE },
+    { "*-supply",           PROP_IGNORE },
 
     { NULL,                      PROP_IGNORE },  /* last element */
 };
@@ -1767,6 +1830,88 @@ static int add_qcom_trogdor_bluetooth_node(SysBusDevice *sbdev, void *opaque,
     return 0;
 }
 
+static int add_qcom_trogdor_touchscreen_node(SysBusDevice *sbdev, void *opaque,
+                                   ProppertList *properties)
+{
+    PlatformBusFDTData *data = opaque;
+    const char *parent_node = data->pbus_node_name;
+    PlatformBusDevice *pbus = data->pbus;
+    void *fdt_guest = data->fdt;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    uint32_t *irq_attr, *guest_phandle;
+    char *node_name;
+    VFIOINTp *intp;
+    int i, irq_number;
+
+    node_name = g_strdup_printf("%s/touchscreen@10", parent_node);
+    qemu_fdt_add_subnode(fdt_guest, node_name);
+    copy_host_node_prop(vdev, fdt_guest, node_name, properties);
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(fdt_guest, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    guest_phandle = g_new(uint32_t, vbasedev->num_regulators);
+    for (i = 0; i < vbasedev->num_regulators;  i++) {
+        char *supply_name;
+
+        guest_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt_guest,
+                                             guest_phandle[i],
+                                             vbasedev->regulator_names[i],
+                                             qcom_trogdor_regulator_touchscreen_properties);
+        supply_name = g_strdup_printf("%s-supply",
+                                      vbasedev->regulator_names[i]);
+
+        error_report("%s copying properties of regulator name %s",
+                     __func__, supply_name);
+
+        qemu_fdt_setprop_cell(fdt_guest, node_name, supply_name,
+                              guest_phandle[i]);
+    }
+
+    g_free(guest_phandle);
+    guest_phandle = g_new(uint32_t, vbasedev->num_pctrl_states);
+    for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
+        char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
+
+        guest_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt_guest,
+                                           guest_phandle[i]);
+
+        error_report("%s copying properties of regulator name %s",
+                     __func__, pinctrl_name);
+
+        qemu_fdt_setprop_cell(fdt_guest, node_name, pinctrl_name,
+                              guest_phandle[i]);
+    }
+
+    g_free(guest_phandle);
+    g_free(node_name);
+    return 0;
+}
+
 static int add_qcom_trogdor_fdt_gpu_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
 {
@@ -2075,6 +2220,10 @@ static const BindingEntry geniqup_grand_child_bindings[] = {
     VFIO_PLATFORM_BINDING("qcom,geni-uart", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("qcom,wcn3991-bt",
             add_qcom_trogdor_bluetooth_node, qcom_trogdor_geni_bluetooth_prop),
+
+    VFIO_PLATFORM_BINDING("qcom,geni-i2c", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("hid-over-i2c",
+            add_qcom_trogdor_touchscreen_node, qcom_trogdor_geni_touchscreen_prop),
 #endif
 };
 
@@ -2255,6 +2404,151 @@ static int add_qcom_trogdor_geni_uart_node(SysBusDevice *sbdev, void *opaque,
     return 0;
 }
 
+static int add_qcom_trogdor_geni_i2c_node(SysBusDevice *sbdev, void *opaque,
+                                   ProppertList *properties)
+{
+    PlatformBusFDTData *data = opaque;
+    const char *parent_node = data->pbus_node_name;
+    PlatformBusDevice *pbus = data->pbus;
+    void *fdt_guest = data->fdt;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    uint32_t *reg_attr, *irq_attr, *guest_clk_phandle;
+    uint32_t phandle;
+    char *node_name;
+    uint64_t mmio_base;
+    int i, irq_number;
+    VFIOINTp *intp;
+    PlatformBusFDTData child_data = {
+        .fdt = fdt_guest,
+        .irq_start = data->irq_start,
+        .pbus = pbus,
+    };
+
+    mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
+    node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                vbasedev->name, mmio_base);
+
+    qemu_fdt_add_subnode(fdt_guest, node_name);
+    copy_host_node_prop(vdev, fdt_guest, node_name, properties);
+
+    /* Copy reg (remapped) */
+    reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
+    for (i = 0; i < vbasedev->num_regions; i++) {
+        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
+        reg_attr[2 * i] = cpu_to_be32(mmio_base);
+        reg_attr[2 * i + 1] = cpu_to_be32(
+                                memory_region_size(vdev->regions[i]->mem));
+    }
+    qemu_fdt_setprop(fdt_guest, node_name, "reg", reg_attr,
+                     vbasedev->num_regions * 2 * sizeof(uint32_t));
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(fdt_guest, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_clks);
+    for (i = 0; i < vbasedev->num_clks;  i++) {
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_clk_mmio_node(data, vdev, i, fdt_guest,
+                                       guest_clk_phandle[i]);
+        guest_clk_phandle[i] = cpu_to_be32(guest_clk_phandle[i]);
+    }
+    if (vbasedev->num_clks > 0) {
+        qemu_fdt_setprop(fdt_guest, node_name, "clocks", guest_clk_phandle,
+                         vbasedev->num_clks * sizeof(uint32_t));
+    }
+    g_free(guest_clk_phandle);
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_regulators);
+    for (i = 0; i < vbasedev->num_regulators;  i++) {
+        char *supply_name;
+
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt_guest,
+                                             guest_clk_phandle[i],
+                                             vbasedev->regulator_names[i],
+                                             qcom_trogdor_regulator_properties);
+        supply_name = g_strdup_printf("%s-supply",
+                                      vbasedev->regulator_names[i]);
+        qemu_fdt_setprop_cell(fdt_guest, node_name, supply_name,
+                              guest_clk_phandle[i]);
+    }
+
+    g_free(guest_clk_phandle);
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_interconnects * 4);
+
+    for (i = 0; i < vbasedev->num_interconnects;  i++) {
+        phandle = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_inter_mmio_node(data, vdev, i, fdt_guest, phandle);
+        /* src node points to dst node within the same provider */
+        guest_clk_phandle[(i * 4) + 0] = cpu_to_be32(phandle);
+        guest_clk_phandle[(i * 4) + 1] = cpu_to_be32(0); // node id
+        guest_clk_phandle[(i * 4) + 2] = cpu_to_be32(phandle);
+        guest_clk_phandle[(i * 4) + 3] = cpu_to_be32(1); // node id
+    }
+    if (vbasedev->num_interconnects > 0) {
+        qemu_fdt_setprop(fdt_guest, node_name, "interconnects", guest_clk_phandle,
+                         vbasedev->num_interconnects * sizeof(uint32_t) * 4);
+    }
+
+    g_free(guest_clk_phandle);
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_phys);
+    for (i = 0; i < vbasedev->num_phys;  i++) {
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_phy_mmio_node(data, vdev, i, fdt_guest,
+                                       guest_clk_phandle[i]);
+        guest_clk_phandle[i] = cpu_to_be32(guest_clk_phandle[i]);
+    }
+    if (vbasedev->num_phys > 0) {
+        qemu_fdt_setprop(fdt_guest, node_name, "phys", guest_clk_phandle,
+                         vbasedev->num_phys * sizeof(uint32_t));
+    }
+    g_free(guest_clk_phandle);
+
+    guest_clk_phandle = g_new(uint32_t, vbasedev->num_pctrl_states);
+    for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
+        char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
+
+        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt_guest,
+                                           guest_clk_phandle[i]);
+        qemu_fdt_setprop_cell(fdt_guest, node_name, pinctrl_name,
+                              guest_clk_phandle[i]);
+    }
+
+    g_free(guest_clk_phandle);
+    g_free(reg_attr);
+
+    child_data.pbus_node_name = node_name;
+    foreach_dynamic_sysbus_device(add_fdt_child_geniqup_grand_child_node, &child_data);
+
+    g_free(node_name);
+    return 0;
+}
+
 static const BindingEntry child_bindings[] = {
 #ifdef CONFIG_LINUX
     VFIO_PLATFORM_BINDING("snps,dwc3",
@@ -2265,6 +2559,10 @@ static const BindingEntry child_bindings[] = {
     VFIO_PLATFORM_BINDING("qcom,geni-uart",
             add_qcom_trogdor_geni_uart_node, qcom_trogdor_geni_uart_prop),
     VFIO_PLATFORM_BINDING("qcom,wcn3991-bt", no_fdt_node, NULL),
+
+    VFIO_PLATFORM_BINDING("qcom,geni-i2c",
+            add_qcom_trogdor_geni_i2c_node, qcom_trogdor_geni_i2c_prop),
+    VFIO_PLATFORM_BINDING("hid-over-i2c", no_fdt_node, NULL),
 #endif
 };
 
@@ -2667,7 +2965,8 @@ static const BindingEntry bindings[] = {
             add_qcom_trogdor_wrapper_geniqup_node, qcom_trogdor_geni_properties),
     VFIO_PLATFORM_BINDING("qcom,geni-uart", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("qcom,wcn3991-bt", no_fdt_node, NULL),
-
+    VFIO_PLATFORM_BINDING("qcom,geni-i2c", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("hid-over-i2c", no_fdt_node, NULL),
 #endif
     TYPE_BINDING(TYPE_TPM_TIS_SYSBUS, add_tpm_tis_fdt_node),
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
