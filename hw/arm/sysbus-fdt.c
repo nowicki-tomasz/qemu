@@ -1299,6 +1299,21 @@ static ProppertList qcom_trogdor_backlight_properties[] = {
     { NULL,              PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_audio_codec_properties[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    { "pinctrl-names",   PROP_COPY },
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+    { "*-gpios",         PROP_IGNORE },
+
+    { "compatible",      PROP_COPY },
+    { "#sound-dai-cells", PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
 static ProppertList qcom_trogdor_xhci_properties[] = {
     { "name",            PROP_IGNORE }, /* handled automatically */
     { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
@@ -3500,6 +3515,8 @@ static const BindingEntry bindings[] = {
             add_qcom_trogdor_fdt_node, qcom_trogdor_sdhci_properties),
     VFIO_PLATFORM_BINDING("qcom,dwc3",
             add_qcom_trogdor_wrapper_usb_node, qcom_trogdor_parent_xhci_properties),
+    VFIO_PLATFORM_BINDING("maxim,max98357a",
+            add_qcom_trogdor_fdt_node, qcom_trogdor_audio_codec_properties),
     VFIO_PLATFORM_BINDING("pwm-backlight",
             add_qcom_trogdor_fdt_node, qcom_trogdor_backlight_properties),
     VFIO_PLATFORM_BINDING("boe,nv133fhm-n62",
