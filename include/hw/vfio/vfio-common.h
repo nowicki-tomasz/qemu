@@ -98,6 +98,12 @@ typedef struct VFIOHostDMAWindow {
 
 typedef struct VFIODeviceOps VFIODeviceOps;
 
+typedef struct VFIODeviceGpio {
+    char *gpio_func_names;
+    unsigned int pin_num;
+    uint64_t *flags;
+} VFIODeviceGpio;
+
 typedef struct VFIODevice {
     QLIST_ENTRY(VFIODevice) next;
     struct VFIOGroup *group;
@@ -119,7 +125,9 @@ typedef struct VFIODevice {
     unsigned int num_interconnects;
     unsigned int num_phys;
     unsigned int num_pctrl_states;
+    unsigned int num_gpio_func;
     char **regulator_names;
+    VFIODeviceGpio *gpio;
 } VFIODevice;
 
 struct VFIODeviceOps {

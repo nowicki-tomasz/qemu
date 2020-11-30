@@ -208,6 +208,7 @@ struct vfio_device_info {
     __u32   num_interconnects; /* Max interconnect index + 1 */
     __u32   num_phys;   /* Max phy index + 1 */
     __u32   num_pctrl_states; /* Max pctrl_states index + 1 */
+    __u32   num_gpio;   /* Max pctrl_states index + 1 */
 };
 #define VFIO_DEVICE_GET_INFO		_IO(VFIO_TYPE, VFIO_BASE + 7)
 
@@ -729,6 +730,48 @@ struct vfio_regulator_info {
     __u64   len;        /* Buffer length */
 };
 #define VFIO_DEVICE_GET_REGULATOR_INFO      _IO(VFIO_TYPE, VFIO_BASE + 17)
+
+/**
+ * VFIO_DEVICE_GET_GPIO_INFO - _IOWR(VFIO_TYPE, VFIO_BASE + 18,
+ *                   struct vfio_gpio_info)
+ *
+ * Retrieve information about a device GPIO function.  Caller provides
+ * struct vfio_gpio_info with index value set. Caller sets argsz, allocates
+ * buffer and sets its length.
+ * Return: 0 on success, -errno on failure. -ENOSPC means that caller
+ * should allocate more space for function name buffer.
+ */
+struct vfio_gpio_info {
+    __u32   argsz;
+    __u32   index;      /* GPIO function index */
+    __u64   usr_data;   /* Buffer for name */
+    __u64   len;        /* Buffer length */
+    __u64   pin_num;    /* Number of function pins */
+};
+#define VFIO_DEVICE_GET_GPIO_INFO       _IO(VFIO_TYPE, VFIO_BASE + 18)
+
+/**
+ * VFIO_DEVICE_GET_GPIO_FUNC_INFO - _IOWR(VFIO_TYPE, VFIO_BASE + 19,
+ *                     struct vfio_gpio_func_info)
+ *
+ * Retrieve information about a device GPIO function pin.  Caller provides
+ * struct vfio_gpio_func_info with function index and pin index value set.
+ * Caller sets argsz.
+ * Return: 0 on success, -errno on failure.
+ */
+struct vfio_gpio_func_info {
+    __u32   argsz;
+    __u32   index;      /* GPIO function index */
+    __u64   pin_idx;    /* Function pin index */
+#define VFIO_GPIO_ACTIVE_LOW    0x1
+#define VFIO_GPIO_OPEN_SOURCE   0x2
+#define VFIO_GPIO_OPEN_DRAIN    0x4
+#define VFIO_GPIO_TRANSITORY    0x8
+#define VFIO_GPIO_PULL_UP   0x10
+#define VFIO_GPIO_PULL_DOWN 0x20
+    __u64   flags;      /* GPIO pin flags */
+};
+#define VFIO_DEVICE_GET_GPIO_FUNC_INFO      _IO(VFIO_TYPE, VFIO_BASE + 19)
 
 /* -------- API for Type1 VFIO IOMMU -------- */
 
