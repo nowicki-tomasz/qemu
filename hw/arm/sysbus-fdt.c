@@ -91,6 +91,10 @@ static gchar *platform_bus_node;
 
 #ifdef CONFIG_LINUX
 
+static uint32_t panel_gpio_handle;
+static uint32_t panel_dsi_bridge_phandle, panel_dsi_bridge_rempte_endpoint;
+static uint32_t mdss_dsi_bridge_phandle, mdss_dsi_bridge_rempte_endpoint;
+
 /**
  * copy_properties_from_host
  *
@@ -991,6 +995,38 @@ static void fdt_build_virtio_regulator_mmio_node(PlatformBusFDTData *data,
                                   regulator_node_name, allowed_props);
 }
 
+static void fdt_build_virtio_gpio_mmio_node(PlatformBusFDTData *data,
+                                            VFIOPlatformDevice *vdev,
+                                            int index,
+                                            void *guest_fdt,
+                                            uint32_t phandle)
+{
+    uint64_t mmio_base, mmio_size;
+    uint32_t reg_attr[2];
+    char *node_name;
+    int irq;
+
+    fdt_virtio_realize(data, vdev, index, &mmio_base, &mmio_size, &irq,
+                       VIRTIO_ID_PINCTRL);
+
+    node_name = g_strdup_printf("%s/%s@%" PRIx64, platform_bus_node,
+                                    "virtio_mmio", mmio_base);
+    qemu_fdt_add_subnode(guest_fdt, node_name);
+    qemu_fdt_setprop_string(guest_fdt, node_name, "compatible",
+                            "virtio,mmio");
+    qemu_fdt_setprop(guest_fdt, node_name, "gpio-controller", "", 0);
+    qemu_fdt_setprop_cells(guest_fdt, node_name, "#gpio-cells", 2);
+    qemu_fdt_setprop_cell(guest_fdt, node_name, "phandle", phandle);
+
+    reg_attr[0] = cpu_to_be32(mmio_base);
+    reg_attr[1] = cpu_to_be32(mmio_size);
+    qemu_fdt_setprop(guest_fdt, node_name, "reg", reg_attr,
+                     2 * sizeof(uint32_t));
+    qemu_fdt_setprop_cells(guest_fdt, node_name, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+}
+
 static int add_mvrl_armada_fdt_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
 {
@@ -1472,6 +1508,28 @@ static ProppertList qcom_trogdor_geni_touchscreen_prop[] = {
     { NULL,               PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_geni_dsi_bridge_prop[] = {
+    { "name",             PROP_IGNORE }, /* handled automatically */
+    { "phandle",          PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",    PROP_IGNORE }, /* not needed for the generic case */
+
+    { "interrupts",       PROP_IGNORE },
+    { "pinctrl-names",    PROP_COPY },
+    { "pinctrl-*",        PROP_IGNORE }, /* pin control */
+    { "interrupt-parent", PROP_IGNORE },
+    { "*-gpios",          PROP_IGNORE },
+    { "*-supply",         PROP_IGNORE },
+    { "clocks",           PROP_IGNORE },
+
+    { "compatible",       PROP_COPY },
+    { "reg",              PROP_COPY },
+    { "gpio-controller",  PROP_COPY },
+    { "#gpio-cells",      PROP_COPY },
+    { "clock-names",      PROP_COPY },
+
+    { NULL,               PROP_IGNORE },  /* last element */
+};
+
 
 static ProppertList qcom_trogdor_regulator_properties[] = {
     { "compatible",              PROP_IGNORE },
@@ -1501,6 +1559,42 @@ static ProppertList qcom_trogdor_regulator_touchscreen_properties[] = {
 
     { NULL,                      PROP_IGNORE },  /* last element */
 };
+
+/*
+ * This is Linux-specific flags. Default controllers' and Linux' mapping match.
+ */
+enum of_gpio_flags {
+    OF_GPIO_ACTIVE_LOW = 0x1,
+    OF_GPIO_SINGLE_ENDED = 0x2,
+    OF_GPIO_OPEN_DRAIN = 0x4,
+    OF_GPIO_TRANSITORY = 0x8,
+    OF_GPIO_PULL_UP = 0x10,
+    OF_GPIO_PULL_DOWN = 0x20,
+};
+
+static uint64_t fdt_xlate_flags(uint64_t flags)
+{
+    uint64_t xlate_flags = 0;
+
+    if (flags & VFIO_GPIO_ACTIVE_LOW)
+        xlate_flags |= OF_GPIO_ACTIVE_LOW;
+
+    if (flags & VFIO_GPIO_OPEN_SOURCE)
+        xlate_flags |= OF_GPIO_SINGLE_ENDED;
+    else if (flags & VFIO_GPIO_OPEN_DRAIN)
+        xlate_flags |= OF_GPIO_SINGLE_ENDED | OF_GPIO_OPEN_DRAIN;
+
+    if (flags & VFIO_GPIO_TRANSITORY)
+        xlate_flags |= OF_GPIO_TRANSITORY;
+
+    if (flags & VFIO_GPIO_PULL_UP)
+        xlate_flags |= OF_GPIO_PULL_UP;
+
+    if (flags & VFIO_GPIO_PULL_DOWN)
+        xlate_flags |= OF_GPIO_PULL_DOWN;
+
+    return xlate_flags;
+}
 
 // MICAH hook into this for qcom geni se
 static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
@@ -1912,6 +2006,164 @@ static int add_qcom_trogdor_touchscreen_node(SysBusDevice *sbdev, void *opaque,
     return 0;
 }
 
+static int add_qcom_trogdor_dsi_bridge_node(SysBusDevice *sbdev, void *opaque,
+                                            ProppertList *properties)
+{
+    PlatformBusFDTData *data = opaque;
+    const char *parent_node = data->pbus_node_name;
+    PlatformBusDevice *pbus = data->pbus;
+    void *fdt = data->fdt;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    char *node_name, *ports_name, *port_name, *endpoint_name;
+    int i;
+
+    node_name = g_strdup_printf("%s/bridge@2d", parent_node);
+    qemu_fdt_add_subnode(fdt, node_name);
+    copy_host_node_prop(vdev, fdt, node_name, properties);
+
+    /* Reference for panel GPIO */
+    if (panel_gpio_handle == 0)
+        panel_gpio_handle = qemu_fdt_alloc_phandle(fdt);
+    qemu_fdt_setprop_cell(fdt, node_name, "phandle", panel_gpio_handle);
+
+    /* Port tree */
+    ports_name = g_strdup_printf("%s/%s", node_name, "ports");
+    qemu_fdt_add_subnode(fdt, ports_name);
+    qemu_fdt_setprop_cell(fdt, ports_name, "#address-cells", 1);
+    qemu_fdt_setprop_cell(fdt, ports_name, "#size-cells", 0);
+
+    /* First port, MDSS reference */
+    port_name = g_strdup_printf("%s/%s", ports_name, "port@0");
+    qemu_fdt_add_subnode(fdt, port_name);
+    qemu_fdt_setprop_cell(fdt, port_name, "reg", 0);
+
+    endpoint_name = g_strdup_printf("%s/%s", port_name, "endpoint");
+    qemu_fdt_add_subnode(fdt, endpoint_name);
+
+    if (mdss_dsi_bridge_rempte_endpoint == 0)
+        mdss_dsi_bridge_rempte_endpoint = qemu_fdt_alloc_phandle(fdt);
+    if (mdss_dsi_bridge_phandle == 0)
+        mdss_dsi_bridge_phandle = qemu_fdt_alloc_phandle(fdt);
+
+    qemu_fdt_setprop_cell(fdt, endpoint_name, "remote-endpoint",
+                          mdss_dsi_bridge_rempte_endpoint);
+    qemu_fdt_setprop_cell(fdt, endpoint_name, "phandle",
+                          mdss_dsi_bridge_phandle);
+
+    /* Second port, panel reference */
+    port_name = g_strdup_printf("%s/%s", ports_name, "port@1");
+    qemu_fdt_add_subnode(fdt, port_name);
+    qemu_fdt_setprop_cell(fdt, port_name, "reg", 1);
+
+    endpoint_name = g_strdup_printf("%s/%s", port_name, "endpoint");
+    qemu_fdt_add_subnode(fdt, endpoint_name);
+    qemu_fdt_setprop_sized_cells(fdt, endpoint_name, "data-lanes", 1, 0, 1, 1);
+
+    if (panel_dsi_bridge_rempte_endpoint == 0)
+        panel_dsi_bridge_rempte_endpoint = qemu_fdt_alloc_phandle(fdt);
+    if (panel_dsi_bridge_phandle == 0)
+        panel_dsi_bridge_phandle = qemu_fdt_alloc_phandle(fdt);
+
+    qemu_fdt_setprop_cell(fdt, endpoint_name, "remote-endpoint",
+                          panel_dsi_bridge_rempte_endpoint);
+    qemu_fdt_setprop_cell(fdt, endpoint_name, "phandle",
+                          panel_dsi_bridge_phandle);
+    /* Port tree end */
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        uint32_t *irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            VFIOINTp *intp;
+            int irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                                                             data->irq_start;
+
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(fdt, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    if (vbasedev->num_clks > 0) {
+        uint32_t *clk = g_new(uint32_t, vbasedev->num_clks);
+        for (i = 0; i < vbasedev->num_clks;  i++) {
+            clk[i] = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_clk_mmio_node(data, vdev, i, fdt, clk[i]);
+            clk[i] = cpu_to_be32(clk[i]);
+        }
+        qemu_fdt_setprop(fdt, node_name, "clocks", clk,
+                         vbasedev->num_clks * sizeof(uint32_t));
+        g_free(clk);
+    }
+
+    if (vbasedev->num_regulators) {
+        for (i = 0; i < vbasedev->num_regulators;  i++) {
+            char *supply_name;
+            uint32_t reg;
+
+            reg = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt, reg,
+                                                 vbasedev->regulator_names[i],
+                                                 qcom_trogdor_regulator_properties);
+            supply_name = g_strdup_printf("%s-supply",
+                                          vbasedev->regulator_names[i]);
+            qemu_fdt_setprop_cell(fdt, node_name, supply_name, reg);
+        }
+    }
+
+    if (vbasedev->num_pctrl_states) {
+        for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
+            char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
+            uint32_t pctrl = qemu_fdt_alloc_phandle(fdt);
+
+            fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt, pctrl);
+            qemu_fdt_setprop_cell(fdt, node_name, pinctrl_name, pctrl);
+        }
+    }
+
+    if (vbasedev->num_gpio_func > 0) {
+        for (i = 0; i < vbasedev->num_gpio_func;  i++) {
+            uint32_t *gpio_attr;
+            unsigned int pin;
+            char *func_name;
+            uint32_t gpio;
+
+            gpio = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_gpio_mmio_node(data, vdev, i, fdt, gpio);
+            func_name = g_strdup_printf("%s-gpios",
+                                          vbasedev->gpio[i].gpio_func_names);
+
+            gpio_attr = g_new(uint32_t, vbasedev->gpio[i].pin_num * 3);
+            for (pin = 0; pin < vbasedev->gpio[i].pin_num; pin++) {
+                uint64_t flags = fdt_xlate_flags(vbasedev->gpio[i].flags[pin]);
+
+                gpio_attr[(pin * 3) + 0] = cpu_to_be32(gpio);
+                gpio_attr[(pin * 3) + 1] = cpu_to_be32(pin);
+                gpio_attr[(pin * 3) + 2] = cpu_to_be32(flags);
+            }
+            qemu_fdt_setprop(fdt, node_name, func_name, gpio_attr,
+                             vbasedev->gpio[i].pin_num * 3 * sizeof(uint32_t));
+            g_free(gpio_attr);
+        }
+    }
+
+    g_free(node_name);
+    return 0;
+}
+
 static int add_qcom_trogdor_fdt_gpu_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
 {
@@ -2224,6 +2476,8 @@ static const BindingEntry geniqup_grand_child_bindings[] = {
     VFIO_PLATFORM_BINDING("qcom,geni-i2c", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("hid-over-i2c",
             add_qcom_trogdor_touchscreen_node, qcom_trogdor_geni_touchscreen_prop),
+    VFIO_PLATFORM_BINDING("ti,sn65dsi86",
+            add_qcom_trogdor_dsi_bridge_node, qcom_trogdor_geni_dsi_bridge_prop),
 #endif
 };
 
@@ -2563,6 +2817,7 @@ static const BindingEntry child_bindings[] = {
     VFIO_PLATFORM_BINDING("qcom,geni-i2c",
             add_qcom_trogdor_geni_i2c_node, qcom_trogdor_geni_i2c_prop),
     VFIO_PLATFORM_BINDING("hid-over-i2c", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("ti,sn65dsi86", no_fdt_node, NULL),
 #endif
 };
 
@@ -2967,6 +3222,7 @@ static const BindingEntry bindings[] = {
     VFIO_PLATFORM_BINDING("qcom,wcn3991-bt", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("qcom,geni-i2c", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("hid-over-i2c", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("ti,sn65dsi86", no_fdt_node, NULL),
 #endif
     TYPE_BINDING(TYPE_TPM_TIS_SYSBUS, add_tpm_tis_fdt_node),
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
