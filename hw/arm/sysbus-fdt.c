@@ -92,6 +92,7 @@ static gchar *platform_bus_node;
 #ifdef CONFIG_LINUX
 
 static uint32_t ec_pwm_handle;
+static uint32_t panel_backlight_handle;
 static uint32_t panel_gpio_handle;
 static uint32_t panel_dsi_bridge_phandle, panel_dsi_bridge_rempte_endpoint;
 static uint32_t mdss_dsi_bridge_phandle, mdss_dsi_bridge_rempte_endpoint;
@@ -1265,6 +1266,39 @@ static ProppertList qcom_trogdor_parent_xhci_properties[] = {
     { NULL,              PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_panel_properties[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    { "*-supply",        PROP_IGNORE },
+    { "*-gpios",         PROP_IGNORE },
+    { "backlight",       PROP_IGNORE },
+
+    { "compatible",      PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
+static ProppertList qcom_trogdor_backlight_properties[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    { "pinctrl-names",   PROP_COPY },
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+    { "*-supply",        PROP_IGNORE },
+    { "*-gpios",         PROP_IGNORE },
+    { "pwms",            PROP_IGNORE },
+
+    { "compatible",                 PROP_COPY },
+    { "brightness-levels",          PROP_COPY },
+    { "num-interpolated-steps",     PROP_COPY },
+    { "default-brightness-level",   PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
 static ProppertList qcom_trogdor_xhci_properties[] = {
     { "name",            PROP_IGNORE }, /* handled automatically */
     { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
@@ -1601,6 +1635,35 @@ static ProppertList qcom_trogdor_regulator_touchscreen_properties[] = {
     { NULL,                      PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_regulator_backlight_properties[] = {
+    { "compatible",             PROP_IGNORE },
+    { "phandle",                PROP_IGNORE },
+    { "name",                    PROP_IGNORE },
+
+    { "regulator-name",         PROP_COPY },
+    { "regulator-always-on",    PROP_COPY },
+    { "regulator-boot-on",      PROP_COPY },
+
+    { NULL,                     PROP_IGNORE },  /* last element */
+};
+
+static ProppertList qcom_trogdor_regulator_panel_properties[] = {
+    { "compatible",             PROP_IGNORE },
+    { "phandle",                PROP_IGNORE },
+    { "name",                    PROP_IGNORE },
+
+    { "gpio",                   PROP_IGNORE },
+    { "enable-active-high",     PROP_IGNORE },
+    { "pinctrl-*",              PROP_IGNORE },
+    { "*-supply",               PROP_IGNORE },
+
+    { "regulator-name",         PROP_COPY },
+    { "regulator-max-microvolt", PROP_COPY },
+    { "regulator-min-microvolt", PROP_COPY },
+
+    { NULL,                     PROP_IGNORE },  /* last element */
+};
+
 /*
  * This is Linux-specific flags. Default controllers' and Linux' mapping match.
  */
@@ -1637,6 +1700,23 @@ static uint64_t fdt_xlate_flags(uint64_t flags)
     return xlate_flags;
 }
 
+static bool vfio_platform_match_raw(SysBusDevice *sbdev, const char *pattern)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    const char *compat;
+    unsigned int n;
+
+    for (n = vdev->num_compat, compat = vdev->compat; n > 0;
+         n--, compat += strlen(compat) + 1) {
+
+        if (!strcmp(pattern, compat)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // MICAH hook into this for qcom geni se
 static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
@@ -1662,6 +1742,66 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
     qemu_fdt_add_subnode(fdt, node_name);
     copy_host_node_prop(vdev, fdt, node_name, properties);
 
+    if (vfio_platform_match_raw(sbdev, "pwm-backlight")) {
+        uint32_t pwms_attr[2];
+
+        if (ec_pwm_handle == 0)
+            ec_pwm_handle = qemu_fdt_alloc_phandle(fdt);
+
+        pwms_attr[0] = cpu_to_be32(ec_pwm_handle);
+        pwms_attr[1] = cpu_to_be32(1);
+
+        qemu_fdt_setprop(fdt, node_name, "pwms", pwms_attr,
+                         2 * sizeof(uint32_t));
+
+        if (panel_backlight_handle == 0)
+            panel_backlight_handle = qemu_fdt_alloc_phandle(fdt);
+
+        qemu_fdt_setprop_cell(fdt, node_name, "phandle", panel_backlight_handle);
+    }
+
+    if (vfio_platform_match_raw(sbdev, "boe,nv133fhm-n62")) {
+        uint32_t gpio_attr[3];
+        char *port_name;
+
+        /* Backlight reference */
+        if (panel_backlight_handle == 0)
+            panel_backlight_handle = qemu_fdt_alloc_phandle(fdt);
+
+        qemu_fdt_setprop_cell(fdt, node_name, "backlight", panel_backlight_handle);
+
+        /*
+         * GPIO reference as-is (GPIO controller is assigned entirely),
+         * except phandle.
+         */
+        if (panel_gpio_handle == 0)
+            panel_gpio_handle = qemu_fdt_alloc_phandle(fdt);
+
+        gpio_attr[0] = cpu_to_be32(panel_gpio_handle);
+        gpio_attr[1] = cpu_to_be32(2);
+        gpio_attr[2] = cpu_to_be32(0);
+
+        qemu_fdt_setprop(fdt, node_name, "hpd-gpios", gpio_attr,
+                         3 * sizeof(uint32_t));
+
+        /* Port tree */
+        port_name = g_strdup_printf("%s/%s", node_name, "ports");
+        qemu_fdt_add_subnode(fdt, port_name);
+        port_name = g_strdup_printf("%s/%s", port_name, "port");
+        qemu_fdt_add_subnode(fdt, port_name);
+        port_name = g_strdup_printf("%s/%s", port_name, "endpoint");
+        qemu_fdt_add_subnode(fdt, port_name);
+
+        if (panel_dsi_bridge_rempte_endpoint == 0)
+            panel_dsi_bridge_rempte_endpoint = qemu_fdt_alloc_phandle(fdt);
+        if (panel_dsi_bridge_phandle == 0)
+            panel_dsi_bridge_phandle = qemu_fdt_alloc_phandle(fdt);
+
+        qemu_fdt_setprop_cell(fdt, port_name, "remote-endpoint",
+                              panel_dsi_bridge_phandle);
+        qemu_fdt_setprop_cell(fdt, port_name, "phandle",
+                              panel_dsi_bridge_rempte_endpoint);
+    }
     /* Copy reg (remapped) */
     if (vbasedev->num_regions > 0) {
         uint32_t *reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
@@ -1720,9 +1860,21 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
             uint32_t reg;
 
             reg = qemu_fdt_alloc_phandle(fdt);
-            fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt, reg,
-                                                 vbasedev->regulator_names[i],
-                                                 qcom_trogdor_regulator_properties);
+
+            if (vfio_platform_match_raw(sbdev, "pwm-backlight")) {
+                fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt, reg,
+                                                     vbasedev->regulator_names[i],
+                                                     qcom_trogdor_regulator_backlight_properties);
+            } else if (vfio_platform_match_raw(sbdev, "boe,nv133fhm-n62")) {
+                fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt, reg,
+                                                     vbasedev->regulator_names[i],
+                                                     qcom_trogdor_regulator_panel_properties);
+            } else {
+                fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt, reg,
+                                                     vbasedev->regulator_names[i],
+                                                     qcom_trogdor_regulator_properties);
+            }
+
             supply_name = g_strdup_printf("%s-supply",
                                           vbasedev->regulator_names[i]);
             qemu_fdt_setprop_cell(fdt, node_name, supply_name, reg);
@@ -3348,6 +3500,10 @@ static const BindingEntry bindings[] = {
             add_qcom_trogdor_fdt_node, qcom_trogdor_sdhci_properties),
     VFIO_PLATFORM_BINDING("qcom,dwc3",
             add_qcom_trogdor_wrapper_usb_node, qcom_trogdor_parent_xhci_properties),
+    VFIO_PLATFORM_BINDING("pwm-backlight",
+            add_qcom_trogdor_fdt_node, qcom_trogdor_backlight_properties),
+    VFIO_PLATFORM_BINDING("boe,nv133fhm-n62",
+            add_qcom_trogdor_fdt_node, qcom_trogdor_panel_properties),
     VFIO_PLATFORM_BINDING("snps,dwc3", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("qcom,adreno",
             add_qcom_trogdor_fdt_gpu_node, qcom_trogdor_gpu_properties),
