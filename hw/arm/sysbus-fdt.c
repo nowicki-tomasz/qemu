@@ -1603,40 +1603,46 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
     PlatformBusFDTData *data = opaque;
     const char *parent_node = data->pbus_node_name;
     PlatformBusDevice *pbus = data->pbus;
-    void *fdt_guest = data->fdt;
+    void *fdt = data->fdt;
     VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
     VFIODevice *vbasedev = &vdev->vbasedev;
-    uint32_t *reg_attr, *irq_attr, *guest_clk_phandle;
-    uint32_t phandle;
     char *node_name;
     uint64_t mmio_base;
-    int i, irq_number;
-    VFIOINTp *intp;
+    int i;
 
-    mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
-    node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
-                                vbasedev->name, mmio_base);
 
-    qemu_fdt_add_subnode(fdt_guest, node_name);
-    copy_host_node_prop(vdev, fdt_guest, node_name, properties);
+    if (vbasedev->num_regions > 0) {
+        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
+        node_name = g_strdup_printf("%s/%s@%" PRIx64, parent_node,
+                                    vbasedev->name, mmio_base);
+    } else
+        node_name = g_strdup_printf("%s/%s", parent_node, vbasedev->name);
+
+    qemu_fdt_add_subnode(fdt, node_name);
+    copy_host_node_prop(vdev, fdt, node_name, properties);
 
     /* Copy reg (remapped) */
-    reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
-    for (i = 0; i < vbasedev->num_regions; i++) {
-        mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
-        reg_attr[2 * i] = cpu_to_be32(mmio_base);
-        reg_attr[2 * i + 1] = cpu_to_be32(
-                                memory_region_size(vdev->regions[i]->mem));
+    if (vbasedev->num_regions > 0) {
+        uint32_t *reg_attr = g_new(uint32_t, vbasedev->num_regions * 2);
+        for (i = 0; i < vbasedev->num_regions; i++) {
+            mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, i);
+            reg_attr[2 * i] = cpu_to_be32(mmio_base);
+            reg_attr[2 * i + 1] = cpu_to_be32(
+                                    memory_region_size(vdev->regions[i]->mem));
+        }
+        qemu_fdt_setprop(fdt, node_name, "reg", reg_attr,
+                         vbasedev->num_regions * 2 * sizeof(uint32_t));
+        g_free(reg_attr);
     }
-    qemu_fdt_setprop(fdt_guest, node_name, "reg", reg_attr,
-                     vbasedev->num_regions * 2 * sizeof(uint32_t));
 
     /* Copy interrupts (remapped) */
     if (vbasedev->num_irqs) {
-        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        uint32_t *irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
         for (i = 0; i < vbasedev->num_irqs; i++) {
-            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
-                         data->irq_start;
+            VFIOINTp *intp;
+            int irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                                                             data->irq_start;
+
             irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
             irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
             QLIST_FOREACH(intp, &vdev->intp_list, next) {
@@ -1650,92 +1656,103 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
                 irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
             }
         }
-        qemu_fdt_setprop(fdt_guest, node_name, "interrupts",
+        qemu_fdt_setprop(fdt, node_name, "interrupts",
                          irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
         g_free(irq_attr);
     }
 
-    guest_clk_phandle = g_new(uint32_t, vbasedev->num_clks);
-    for (i = 0; i < vbasedev->num_clks;  i++) {
-        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
-        fdt_build_virtio_clk_mmio_node(data, vdev, i, fdt_guest,
-                                       guest_clk_phandle[i]);
-        guest_clk_phandle[i] = cpu_to_be32(guest_clk_phandle[i]);
-    }
     if (vbasedev->num_clks > 0) {
-        qemu_fdt_setprop(fdt_guest, node_name, "clocks", guest_clk_phandle,
+        uint32_t *clk = g_new(uint32_t, vbasedev->num_clks);
+        for (i = 0; i < vbasedev->num_clks;  i++) {
+            clk[i] = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_clk_mmio_node(data, vdev, i, fdt, clk[i]);
+            clk[i] = cpu_to_be32(clk[i]);
+        }
+        qemu_fdt_setprop(fdt, node_name, "clocks", clk,
                          vbasedev->num_clks * sizeof(uint32_t));
-    }
-    g_free(guest_clk_phandle);
-
-    guest_clk_phandle = g_new(uint32_t, vbasedev->num_regulators);
-    for (i = 0; i < vbasedev->num_regulators;  i++) {
-        char *supply_name;
-
-        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
-        fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt_guest,
-                                             guest_clk_phandle[i],
-                                             vbasedev->regulator_names[i],
-                                             qcom_trogdor_regulator_properties);
-        supply_name = g_strdup_printf("%s-supply",
-                                      vbasedev->regulator_names[i]);
-
-        error_report("%s copying properties of regulator name %s",
-                     __func__, supply_name);
-
-        qemu_fdt_setprop_cell(fdt_guest, node_name, supply_name,
-                              guest_clk_phandle[i]);
+        g_free(clk);
     }
 
-    g_free(guest_clk_phandle);
+    if (vbasedev->num_regulators) {
+        for (i = 0; i < vbasedev->num_regulators;  i++) {
+            char *supply_name;
+            uint32_t reg;
 
-    guest_clk_phandle = g_new(uint32_t, vbasedev->num_interconnects * 4);
-    for (i = 0; i < vbasedev->num_interconnects;  i++) {
-        phandle = qemu_fdt_alloc_phandle(fdt_guest);
-        fdt_build_virtio_inter_mmio_node(data, vdev, i, fdt_guest, phandle);
-        /* src node points to dst node within the same provider */
-        guest_clk_phandle[(i * 4) + 0] = cpu_to_be32(phandle);
-        guest_clk_phandle[(i * 4) + 1] = cpu_to_be32(0); // node id
-        guest_clk_phandle[(i * 4) + 2] = cpu_to_be32(phandle);
-        guest_clk_phandle[(i * 4) + 3] = cpu_to_be32(1); // node id
+            reg = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_regulator_mmio_node(data, vdev, i, fdt, reg,
+                                                 vbasedev->regulator_names[i],
+                                                 qcom_trogdor_regulator_properties);
+            supply_name = g_strdup_printf("%s-supply",
+                                          vbasedev->regulator_names[i]);
+            qemu_fdt_setprop_cell(fdt, node_name, supply_name, reg);
+        }
     }
-    if (vbasedev->num_interconnects > 0) {
-        qemu_fdt_setprop(fdt_guest, node_name, "interconnects", guest_clk_phandle,
+
+    if (vbasedev->num_gpio_func > 0) {
+        for (i = 0; i < vbasedev->num_gpio_func;  i++) {
+            uint32_t *gpio_attr;
+            unsigned int pin;
+            char *func_name;
+            uint32_t gpio;
+
+            gpio = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_gpio_mmio_node(data, vdev, i, fdt, gpio);
+            func_name = g_strdup_printf("%s-gpios",
+                                          vbasedev->gpio[i].gpio_func_names);
+
+            gpio_attr = g_new(uint32_t, vbasedev->gpio[i].pin_num * 3);
+            for (pin = 0; pin < vbasedev->gpio[i].pin_num; pin++) {
+                uint64_t flags = fdt_xlate_flags(vbasedev->gpio[i].flags[pin]);
+
+                gpio_attr[(pin * 3) + 0] = cpu_to_be32(gpio);
+                gpio_attr[(pin * 3) + 1] = cpu_to_be32(pin);
+                gpio_attr[(pin * 3) + 2] = cpu_to_be32(flags);
+            }
+            qemu_fdt_setprop(fdt, node_name, func_name, gpio_attr,
+                             vbasedev->gpio[i].pin_num * 3 * sizeof(uint32_t));
+            g_free(gpio_attr);
+        }
+    }
+    if (vbasedev->num_interconnects) {
+        uint32_t *inter_attr = g_new(uint32_t, vbasedev->num_interconnects * 4);
+        for (i = 0; i < vbasedev->num_interconnects;  i++) {
+            uint32_t inter;
+
+            inter = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_inter_mmio_node(data, vdev, i, fdt, inter);
+            /* src node points to dst node within the same provider */
+            inter_attr[(i * 4) + 0] = cpu_to_be32(inter);
+            inter_attr[(i * 4) + 1] = cpu_to_be32(0); // node id
+            inter_attr[(i * 4) + 2] = cpu_to_be32(inter);
+            inter_attr[(i * 4) + 3] = cpu_to_be32(1); // node id
+        }
+        qemu_fdt_setprop(fdt, node_name, "interconnects", inter_attr,
                          vbasedev->num_interconnects * sizeof(uint32_t) * 4);
+        g_free(inter_attr);
     }
 
-    g_free(guest_clk_phandle);
-
-    guest_clk_phandle = g_new(uint32_t, vbasedev->num_phys);
-    for (i = 0; i < vbasedev->num_phys;  i++) {
-        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
-        fdt_build_virtio_phy_mmio_node(data, vdev, i, fdt_guest,
-                                       guest_clk_phandle[i]);
-        guest_clk_phandle[i] = cpu_to_be32(guest_clk_phandle[i]);
-    }
     if (vbasedev->num_phys > 0) {
-        qemu_fdt_setprop(fdt_guest, node_name, "phys", guest_clk_phandle,
+        uint32_t *phy = g_new(uint32_t, vbasedev->num_phys);
+        for (i = 0; i < vbasedev->num_phys;  i++) {
+            phy[i] = qemu_fdt_alloc_phandle(fdt);
+            fdt_build_virtio_phy_mmio_node(data, vdev, i, fdt, phy[i]);
+            phy[i] = cpu_to_be32(phy[i]);
+        }
+        qemu_fdt_setprop(fdt, node_name, "phys", phy,
                          vbasedev->num_phys * sizeof(uint32_t));
-    }
-    g_free(guest_clk_phandle);
-
-    guest_clk_phandle = g_new(uint32_t, vbasedev->num_pctrl_states);
-    for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
-        char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
-
-        guest_clk_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
-        fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt_guest,
-                                           guest_clk_phandle[i]);
-
-        error_report("%s copying properties of regulator name %s",
-                     __func__, pinctrl_name);
-
-        qemu_fdt_setprop_cell(fdt_guest, node_name, pinctrl_name,
-                              guest_clk_phandle[i]);
+        g_free(phy);
     }
 
-    g_free(guest_clk_phandle);
-    g_free(reg_attr);
+    if (vbasedev->num_pctrl_states) {
+        for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
+            char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
+            uint32_t pctrl = qemu_fdt_alloc_phandle(fdt);
+
+            fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt, pctrl);
+            qemu_fdt_setprop_cell(fdt, node_name, pinctrl_name, pctrl);
+        }
+    }
+
     g_free(node_name);
     return 0;
 }
