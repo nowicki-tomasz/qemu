@@ -91,6 +91,7 @@ static gchar *platform_bus_node;
 
 #ifdef CONFIG_LINUX
 
+static uint32_t ec_pwm_handle;
 static uint32_t panel_gpio_handle;
 static uint32_t panel_dsi_bridge_phandle, panel_dsi_bridge_rempte_endpoint;
 static uint32_t mdss_dsi_bridge_phandle, mdss_dsi_bridge_rempte_endpoint;
@@ -1473,6 +1474,30 @@ static ProppertList qcom_trogdor_geni_i2c_prop[] = {
     { NULL,              PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_geni_spi_prop[] = {
+    { "name",            PROP_IGNORE }, /* handled automatically */
+    { "phandle",         PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",   PROP_IGNORE }, /* not needed for the generic case */
+
+    /* The following are copied and remapped by dedicated code */
+    { "reg",             PROP_IGNORE },
+    { "interrupts",      PROP_IGNORE },
+    { "clocks",          PROP_IGNORE },
+    { "pinctrl-names",   PROP_COPY },
+    { "pinctrl-*",       PROP_IGNORE }, /* pin control */
+    { "power-domains",   PROP_IGNORE },
+    { "operating-points-v2",   PROP_IGNORE },
+    { "interconnects",   PROP_IGNORE },
+
+    { "compatible",      PROP_COPY },
+    { "clock-names",     PROP_COPY },
+    { "#*-cells",        PROP_COPY },
+    { "status",          PROP_COPY },
+    { "interconnect-names", PROP_COPY },
+
+    { NULL,              PROP_IGNORE },  /* last element */
+};
+
 static ProppertList qcom_trogdor_geni_bluetooth_prop[] = {
     { "name",             PROP_IGNORE }, /* handled automatically */
     { "phandle",          PROP_IGNORE }, /* not needed for the generic case */
@@ -1530,6 +1555,22 @@ static ProppertList qcom_trogdor_geni_dsi_bridge_prop[] = {
     { NULL,               PROP_IGNORE },  /* last element */
 };
 
+static ProppertList qcom_trogdor_geni_ec_prop[] = {
+    { "name",             PROP_IGNORE }, /* handled automatically */
+    { "phandle",          PROP_IGNORE }, /* not needed for the generic case */
+    { "linux,phandle",    PROP_IGNORE }, /* not needed for the generic case */
+
+    { "interrupt-parent", PROP_IGNORE },
+    { "interrupts",       PROP_IGNORE },
+    { "pinctrl-names",    PROP_COPY },
+    { "pinctrl-*",        PROP_IGNORE }, /* pin control */
+
+    { "compatible",       PROP_COPY },
+    { "reg",              PROP_COPY },
+    { "spi-max-frequency",PROP_COPY },
+
+    { NULL,               PROP_IGNORE },  /* last element */
+};
 
 static ProppertList qcom_trogdor_regulator_properties[] = {
     { "compatible",              PROP_IGNORE },
@@ -2181,6 +2222,79 @@ static int add_qcom_trogdor_dsi_bridge_node(SysBusDevice *sbdev, void *opaque,
     return 0;
 }
 
+static int add_qcom_trogdor_ec_node(SysBusDevice *sbdev, void *opaque,
+                                    ProppertList *properties)
+{
+    PlatformBusFDTData *data = opaque;
+    const char *parent_node = data->pbus_node_name;
+    PlatformBusDevice *pbus = data->pbus;
+    void *fdt_guest = data->fdt;
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    uint32_t *irq_attr, *guest_phandle;
+    char *node_name, *ec_pwm;
+    VFIOINTp *intp;
+    int i, irq_number;
+
+    node_name = g_strdup_printf("%s/ec@0", parent_node);
+    qemu_fdt_add_subnode(fdt_guest, node_name);
+    copy_host_node_prop(vdev, fdt_guest, node_name, properties);
+
+    /* EC-PWM child */
+    ec_pwm = g_strdup_printf("%s/ec-pwm", node_name);
+    qemu_fdt_add_subnode(fdt_guest, ec_pwm);
+    qemu_fdt_setprop_string(fdt_guest, ec_pwm, "compatible",
+                            "google,cros-ec-pwm");
+    qemu_fdt_setprop_cell(fdt_guest, ec_pwm, "#pwm-cells", 1);
+    if (ec_pwm_handle == 0)
+        ec_pwm_handle = qemu_fdt_alloc_phandle(fdt_guest);
+    qemu_fdt_setprop_cell(fdt_guest, ec_pwm, "phandle", ec_pwm_handle);
+    /* EC-PWM child end */
+
+    /* Copy interrupts (remapped) */
+    if (vbasedev->num_irqs) {
+        irq_attr = g_new(uint32_t, vbasedev->num_irqs * 3);
+        for (i = 0; i < vbasedev->num_irqs; i++) {
+            irq_number = platform_bus_get_irqn(pbus, sbdev, i) +
+                         data->irq_start;
+            irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+            irq_attr[3 * i + 1] = cpu_to_be32(irq_number);
+            QLIST_FOREACH(intp, &vdev->intp_list, next) {
+                if (intp->pin == i) {
+                    break;
+                }
+            }
+            if (intp->flags & VFIO_IRQ_INFO_AUTOMASKED) {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+            } else {
+                irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_EDGE_LO_HI);
+            }
+        }
+        qemu_fdt_setprop(fdt_guest, node_name, "interrupts",
+                         irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
+        g_free(irq_attr);
+    }
+
+    guest_phandle = g_new(uint32_t, vbasedev->num_pctrl_states);
+    for (i = 0; i < vbasedev->num_pctrl_states;  i++) {
+        char *pinctrl_name = g_strdup_printf("pinctrl-%u", i);
+
+        guest_phandle[i] = qemu_fdt_alloc_phandle(fdt_guest);
+        fdt_build_virtio_pinctrl_mmio_node(data, vdev, i, fdt_guest,
+                                           guest_phandle[i]);
+
+        error_report("%s copying properties of regulator name %s",
+                     __func__, pinctrl_name);
+
+        qemu_fdt_setprop_cell(fdt_guest, node_name, pinctrl_name,
+                              guest_phandle[i]);
+    }
+
+    g_free(guest_phandle);
+    g_free(node_name);
+    return 0;
+}
+
 static int add_qcom_trogdor_fdt_gpu_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
 {
@@ -2495,6 +2609,10 @@ static const BindingEntry geniqup_grand_child_bindings[] = {
             add_qcom_trogdor_touchscreen_node, qcom_trogdor_geni_touchscreen_prop),
     VFIO_PLATFORM_BINDING("ti,sn65dsi86",
             add_qcom_trogdor_dsi_bridge_node, qcom_trogdor_geni_dsi_bridge_prop),
+
+    VFIO_PLATFORM_BINDING("qcom,geni-spi", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("google,cros-ec-spi",
+            add_qcom_trogdor_ec_node, qcom_trogdor_geni_ec_prop),
 #endif
 };
 
@@ -2835,6 +2953,10 @@ static const BindingEntry child_bindings[] = {
             add_qcom_trogdor_geni_i2c_node, qcom_trogdor_geni_i2c_prop),
     VFIO_PLATFORM_BINDING("hid-over-i2c", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("ti,sn65dsi86", no_fdt_node, NULL),
+
+    VFIO_PLATFORM_BINDING("qcom,geni-spi",
+            add_qcom_trogdor_geni_i2c_node, qcom_trogdor_geni_spi_prop),
+    VFIO_PLATFORM_BINDING("google,cros-ec-spi", no_fdt_node, NULL),
 #endif
 };
 
@@ -3240,6 +3362,8 @@ static const BindingEntry bindings[] = {
     VFIO_PLATFORM_BINDING("qcom,geni-i2c", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("hid-over-i2c", no_fdt_node, NULL),
     VFIO_PLATFORM_BINDING("ti,sn65dsi86", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("qcom,geni-spi", no_fdt_node, NULL),
+    VFIO_PLATFORM_BINDING("google,cros-ec-spi", no_fdt_node, NULL),
 #endif
     TYPE_BINDING(TYPE_TPM_TIS_SYSBUS, add_tpm_tis_fdt_node),
     TYPE_BINDING(TYPE_RAMFB_DEVICE, no_fdt_node),
