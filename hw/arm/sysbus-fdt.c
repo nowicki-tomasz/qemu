@@ -1624,8 +1624,8 @@ static ProppertList qcom_trogdor_geni_ec_prop[] = {
 static ProppertList qcom_trogdor_regulator_properties[] = {
     { "compatible",              PROP_IGNORE },
     { "phandle",                 PROP_IGNORE },
+    { "name",                    PROP_IGNORE },
 
-    { "name",                    PROP_COPY },
     { "regulator-initial-mode",  PROP_COPY },
     { "regulator-max-microvolt", PROP_COPY },
     { "regulator-min-microvolt", PROP_COPY },
@@ -1636,8 +1636,8 @@ static ProppertList qcom_trogdor_regulator_properties[] = {
 static ProppertList qcom_trogdor_regulator_touchscreen_properties[] = {
     { "compatible",              PROP_IGNORE },
     { "phandle",                 PROP_IGNORE },
+    { "name",                    PROP_IGNORE },
 
-    { "name",                    PROP_COPY },
     { "regulator-name",          PROP_COPY },
     { "regulator-max-microvolt", PROP_COPY },
     { "regulator-min-microvolt", PROP_COPY },
