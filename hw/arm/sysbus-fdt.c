@@ -44,17 +44,6 @@
 
 #include "standard-headers/linux/virtio_ids.h"
 
-/*
- * internal struct that contains the information to create dynamic
- * sysbus device node
- */
-typedef struct PlatformBusFDTData {
-    void *fdt; /* device tree handle */
-    int irq_start; /* index of the first IRQ usable by platform bus devices */
-    const char *pbus_node_name; /* name of the platform bus node */
-    PlatformBusDevice *pbus;
-} PlatformBusFDTData;
-
 enum GenericPropertyAction {
     PROP_IGNORE,
     PROP_WARN,
@@ -76,6 +65,20 @@ typedef struct BindingEntry {
     ProppertList *properties;
 } BindingEntry;
 
+/*
+ * internal struct that contains the information to create dynamic
+ * sysbus device node
+ */
+typedef struct PlatformBusFDTData {
+    void *fdt; /* device tree handle */
+    int irq_start; /* index of the first IRQ usable by platform bus devices */
+    const char *pbus_node_name; /* name of the platform bus node */
+    PlatformBusDevice *pbus;
+    VFIOPlatformDevice *parent;
+    const BindingEntry *bindings;
+    unsigned int binding_size;
+} PlatformBusFDTData;
+
 /* helpers */
 
 typedef struct HostProperty {
@@ -90,6 +93,9 @@ static char gpu_node_name[100];
 static gchar *platform_bus_node;
 
 #ifdef CONFIG_LINUX
+
+static QLIST_HEAD(, VFIOPlatformDevice) dev_list =
+    QLIST_HEAD_INITIALIZER(dev_list);
 
 static uint32_t ec_pwm_handle;
 static uint32_t panel_backlight_handle;
@@ -2800,6 +2806,8 @@ static void add_fdt_child_geniqup_grand_child_node(SysBusDevice *sbdev, void *op
     }
 }
 
+static void add_fdt_node(SysBusDevice *sbdev, void *opaque);
+
 static int add_qcom_trogdor_geni_uart_node(SysBusDevice *sbdev, void *opaque,
                                    ProppertList *properties)
 {
@@ -2819,6 +2827,9 @@ static int add_qcom_trogdor_geni_uart_node(SysBusDevice *sbdev, void *opaque,
         .fdt = fdt_guest,
         .irq_start = data->irq_start,
         .pbus = pbus,
+        .parent = vdev,
+        .bindings = geniqup_grand_child_bindings,
+        .binding_size = ARRAY_SIZE(geniqup_grand_child_bindings),
     };
 
     mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
@@ -2954,7 +2965,7 @@ static int add_qcom_trogdor_geni_uart_node(SysBusDevice *sbdev, void *opaque,
     g_free(reg_attr);
 
     child_data.pbus_node_name = node_name;
-    foreach_dynamic_sysbus_device(add_fdt_child_geniqup_grand_child_node, &child_data);
+    foreach_dynamic_sysbus_device(add_fdt_node, &child_data);
 
     g_free(node_name);
     return 0;
@@ -2979,6 +2990,9 @@ static int add_qcom_trogdor_geni_i2c_node(SysBusDevice *sbdev, void *opaque,
         .fdt = fdt_guest,
         .irq_start = data->irq_start,
         .pbus = pbus,
+        .parent = vdev,
+        .bindings = geniqup_grand_child_bindings,
+        .binding_size = ARRAY_SIZE(geniqup_grand_child_bindings),
     };
 
     mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
@@ -3099,7 +3113,7 @@ static int add_qcom_trogdor_geni_i2c_node(SysBusDevice *sbdev, void *opaque,
     g_free(reg_attr);
 
     child_data.pbus_node_name = node_name;
-    foreach_dynamic_sysbus_device(add_fdt_child_geniqup_grand_child_node, &child_data);
+    foreach_dynamic_sysbus_device(add_fdt_node, &child_data);
 
     g_free(node_name);
     return 0;
@@ -3163,6 +3177,9 @@ static int add_qcom_trogdor_wrapper_geniqup_node(SysBusDevice *sbdev, void *opaq
         .fdt = fdt_guest,
         .irq_start = data->irq_start,
         .pbus = pbus,
+        .parent = vdev,
+        .bindings = child_bindings,
+        .binding_size = ARRAY_SIZE(child_bindings),
     };
 
     mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
@@ -3299,7 +3316,7 @@ static int add_qcom_trogdor_wrapper_geniqup_node(SysBusDevice *sbdev, void *opaq
     error_report("\nCreating child node - start");
 
     child_data.pbus_node_name = node_name;
-    foreach_dynamic_sysbus_device(add_fdt_child_node, &child_data);
+    foreach_dynamic_sysbus_device(add_fdt_node, &child_data);
 
     error_report("Creating child node - end\n");
 
@@ -3327,6 +3344,9 @@ static int add_qcom_trogdor_wrapper_usb_node(SysBusDevice *sbdev, void *opaque,
         .fdt = fdt_guest,
         .irq_start = data->irq_start,
         .pbus = pbus,
+        .parent = vdev,
+        .bindings = child_bindings,
+        .binding_size = ARRAY_SIZE(child_bindings),
     };
 
     mmio_base = platform_bus_get_mmio_addr(pbus, sbdev, 0);
@@ -3457,7 +3477,7 @@ static int add_qcom_trogdor_wrapper_usb_node(SysBusDevice *sbdev, void *opaque,
     g_free(reg_attr);
 
     child_data.pbus_node_name = node_name;
-    foreach_dynamic_sysbus_device(add_fdt_child_node, &child_data);
+    foreach_dynamic_sysbus_device(add_fdt_node, &child_data);
 
     g_free(node_name);
     return 0;
@@ -3557,17 +3577,43 @@ static const BindingEntry bindings[] = {
  */
 static void add_fdt_node(SysBusDevice *sbdev, void *opaque)
 {
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    PlatformBusFDTData *data = opaque;
     int i, ret;
 
-    for (i = 0; i < ARRAY_SIZE(bindings); i++) {
-        const BindingEntry *iter = &bindings[i];
+    for (i = 0; i < data->binding_size; i++) {
+        const BindingEntry *iter = &data->bindings[i];
+        VFIOPlatformDevice *dev_iter;
+
+        QLIST_FOREACH(dev_iter, &dev_list, list) {
+            if (dev_iter == vdev) {
+                error_report("Skipped %s, already probed dev %p",
+                             qdev_fw_name(DEVICE(sbdev)), vdev);
+                return;
+            }
+
+        }
 
         if (type_match(sbdev, iter)) {
-            if (!iter->match_fn || iter->match_fn(sbdev, iter)) {
+            if ((!iter->match_fn || iter->match_fn(sbdev, iter)) &&
+                vdev->parent == data->parent) {
+                QLIST_INSERT_HEAD(&dev_list, vdev, list);
                 ret = iter->add_fn(sbdev, opaque, iter->properties);
                 assert(!ret);
                 return;
             }
+        }
+    }
+}
+
+static void fdt_node_check(SysBusDevice *sbdev, void *opaque)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIOPlatformDevice *dev_iter;
+
+    QLIST_FOREACH(dev_iter, &dev_list, list) {
+        if (dev_iter == vdev) {
+            return;
         }
     }
     error_report("Device %s can not be dynamically instantiated",
@@ -3610,10 +3656,15 @@ void platform_bus_add_all_fdt_nodes(void *fdt, const char *intc, hwaddr addr,
         .irq_start = irq_start,
         .pbus_node_name = node,
         .pbus = pbus,
+        .parent = NULL,
+        .bindings = bindings,
+        .binding_size = ARRAY_SIZE(bindings),
     };
 
     /* Loop through all dynamic sysbus devices and create their node */
     foreach_dynamic_sysbus_device(add_fdt_node, &data);
 
+    /* Check that all devices created their DT nodes */
+    foreach_dynamic_sysbus_device(fdt_node_check, &data);
     g_free(node);
 }
