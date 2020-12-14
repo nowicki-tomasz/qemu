@@ -1632,11 +1632,12 @@ int vfio_get_device(VFIOGroup *group, const char *name,
     vbasedev->num_pctrl_states = dev_info.num_pctrl_states;
     vbasedev->num_gpio_func = dev_info.num_gpio;
 
-    error_report("%s irq %d regions %d clocks %d regulators %d inter %d phys %d",
+    error_report("%s irq %d regions %d clocks %d regulators %d inter %d phys %d pctrl states %d gpios %d",
             __func__,
             vbasedev->num_irqs, vbasedev->num_regions, vbasedev->num_clks,
             vbasedev->num_regulators, vbasedev->num_interconnects,
-            vbasedev->num_phys);
+            vbasedev->num_phys, vbasedev->num_pctrl_states,
+            vbasedev->num_gpio_func);
 
     trace_vfio_get_device(name, dev_info.flags, dev_info.num_regions,
                           dev_info.num_irqs);

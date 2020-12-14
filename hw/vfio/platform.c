@@ -212,33 +212,41 @@ static void vfio_intp_inject_pending_lockheld(VFIOINTp *intp)
 static void vfio_intp_interrupt(VFIOINTp *intp)
 {
     int ret;
-    VFIOINTp *tmp;
+//    VFIOINTp *tmp;
     VFIOPlatformDevice *vdev = intp->vdev;
-    bool delay_handling = false;
+//    bool delay_handling = false;
 
     qemu_mutex_lock(&vdev->intp_mutex);
-    if (intp->state == VFIO_IRQ_INACTIVE) {
-        QLIST_FOREACH(tmp, &vdev->intp_list, next) {
-            if (tmp->state == VFIO_IRQ_ACTIVE ||
-                tmp->state == VFIO_IRQ_PENDING) {
-                delay_handling = true;
-                break;
-            }
-        }
-    }
-    if (delay_handling) {
+//    if (intp->state == VFIO_IRQ_INACTIVE) {
+//        QLIST_FOREACH(tmp, &vdev->intp_list, next) {
+//            if (tmp->state == VFIO_IRQ_ACTIVE ||
+//                tmp->state == VFIO_IRQ_PENDING) {
+//
+//                error_report("%s fd=%d irq %d state %d", __func__,
+//                                         event_notifier_get_fd(intp->interrupt),
+//                                         (int)tmp->pin, (int)tmp->state);
+//
+//                delay_handling = true;
+//                break;
+//            }
+//        }
+//    }
+//    if (delay_handling) {
+
+//        error_report("%s fd=%d delay_handling", __func__,
+//                         event_notifier_get_fd(intp->interrupt));
         /*
          * the new IRQ gets a pending status and is pushed in
          * the pending queue
          */
-        intp->state = VFIO_IRQ_PENDING;
-        trace_vfio_intp_interrupt_set_pending(intp->pin);
-        QSIMPLEQ_INSERT_TAIL(&vdev->pending_intp_queue,
-                             intp, pqnext);
-        ret = event_notifier_test_and_clear(intp->interrupt);
-        qemu_mutex_unlock(&vdev->intp_mutex);
-        return;
-    }
+//        intp->state = VFIO_IRQ_PENDING;
+//        trace_vfio_intp_interrupt_set_pending(intp->pin);
+//        QSIMPLEQ_INSERT_TAIL(&vdev->pending_intp_queue,
+//                             intp, pqnext);
+//        ret = event_notifier_test_and_clear(intp->interrupt);
+//        qemu_mutex_unlock(&vdev->intp_mutex);
+//        return;
+//    }
 
     trace_vfio_platform_intp_interrupt(intp->pin,
                               event_notifier_get_fd(intp->interrupt));
@@ -394,16 +402,26 @@ static void vfio_start_irqfd_injection(SysBusDevice *sbdev, qemu_irq irq)
     }
     assert(intp);
 
+    error_report("-------------> %s 0", __func__);
+
     if (kvm_irqchip_add_irqfd_notifier(kvm_state, intp->interrupt,
                                    intp->unmask, irq) < 0) {
+        error_report("-------------> %s 0 1", __func__);
         goto fail_irqfd;
     }
 
+    error_report("-------------> %s 1", __func__);
+
     if (vfio_set_trigger_eventfd(intp, NULL) < 0) {
+        error_report("-------------> %s 1 1", __func__);
         goto fail_vfio;
     }
+
+    error_report("-------------> %s 2", __func__);
+
     if (vfio_irq_is_automasked(intp)) {
         if (vfio_set_resample_eventfd(intp) < 0) {
+            error_report("-------------> %s 2 1", __func__);
             goto fail_vfio;
         }
         trace_vfio_platform_start_level_irqfd_injection(intp->pin,
@@ -413,6 +431,8 @@ static void vfio_start_irqfd_injection(SysBusDevice *sbdev, qemu_irq irq)
         trace_vfio_platform_start_edge_irqfd_injection(intp->pin,
                                     event_notifier_get_fd(intp->interrupt));
     }
+
+    error_report("-------------> %s 3", __func__);
 
     intp->kvm_accel = true;
 
@@ -480,6 +500,8 @@ static int vfio_platform_get_gpio(VFIODevice *vbasedev, int index, Error **errp)
     };
     int ret, i;
 
+    error_report("%s start getting gpio info for idx %d", __func__, index);
+
     gpio_info.usr_data = (uint64_t)g_new0(uint8_t, gpio_info.len);
     ret = ioctl(vbasedev->fd, VFIO_DEVICE_GET_GPIO_INFO, &gpio_info);
     if (ret) {
@@ -496,6 +518,9 @@ static int vfio_platform_get_gpio(VFIODevice *vbasedev, int index, Error **errp)
     vbasedev->gpio[index].gpio_func_names = (char *)gpio_info.usr_data;
     vbasedev->gpio[index].pin_num = gpio_info.pin_num;
 
+    error_report("%s function name %s index %d pins %ld",
+            __func__, (char *)gpio_info.usr_data, index, (long)gpio_info.pin_num);
+
     vbasedev->gpio[index].flags = (uint64_t *)g_new0(uint64_t, gpio_info.pin_num);
     for (i = 0; i < gpio_info.pin_num; i++) {
         gpio_func_info.pin_idx = i;
@@ -503,6 +528,8 @@ static int vfio_platform_get_gpio(VFIODevice *vbasedev, int index, Error **errp)
         if (ret)
             goto err;
 
+        error_report("%s function %s index %d pin %d flags 0x%lx",
+                __func__, (char *)gpio_info.usr_data, index, i, (long)gpio_func_info.flags);
         vbasedev->gpio[index].flags[i] = gpio_func_info.flags;
     }
 
@@ -784,6 +811,8 @@ static Property vfio_platform_dev_properties[] = {
     DEFINE_PROP_UINT32("mmap-timeout-ms", VFIOPlatformDevice,
                        mmap_timeout, 1100),
     DEFINE_PROP_BOOL("x-irqfd", VFIOPlatformDevice, irqfd_allowed, true),
+    DEFINE_PROP_LINK("parent", VFIOPlatformDevice, parent, "vfio-platform",
+                     struct VFIOPlatformDevice *),
     DEFINE_PROP_END_OF_LIST(),
 };
 

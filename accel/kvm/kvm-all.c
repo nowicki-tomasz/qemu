@@ -1334,6 +1334,9 @@ void kvm_irqchip_commit_routes(KVMState *s)
     int ret;
 
     if (kvm_gsi_direct_mapping()) {
+
+        error_report("\n\nkvm_gsi_direct_mapping!!!! route not allowed !!!!!!!!!");
+
         return;
     }
 
@@ -1643,8 +1646,11 @@ static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int rfd, int virq,
     }
 
     if (!kvm_irqfds_enabled()) {
+        error_report("^^^^^^^^^^^ %s 0", __func__);
         return -ENOSYS;
     }
+
+    error_report("^^^^^^^^^^^ %s 1", __func__);
 
     return kvm_vm_ioctl(s, KVM_IRQFD, &irqfd);
 }
@@ -1749,6 +1755,9 @@ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg)
 int kvm_irqchip_add_irqfd_notifier_gsi(KVMState *s, EventNotifier *n,
                                        EventNotifier *rn, int virq)
 {
+
+    error_report("^^^^^^^^^^^ %s 0", __func__);
+
     return kvm_irqchip_assign_irqfd(s, event_notifier_get_fd(n),
            rn ? event_notifier_get_fd(rn) : -1, virq, true);
 }
@@ -1767,6 +1776,7 @@ int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n,
     gboolean found = g_hash_table_lookup_extended(s->gsimap, irq, &key, &gsi);
 
     if (!found) {
+        error_report("^^^^^^^^^^^ %s 0", __func__);
         return -ENXIO;
     }
     return kvm_irqchip_add_irqfd_notifier_gsi(s, n, rn, GPOINTER_TO_INT(gsi));

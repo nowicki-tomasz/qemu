@@ -59,6 +59,8 @@ typedef struct VFIOPlatformDevice {
     QEMUTimer *mmap_timer; /* allows fast-path resume after IRQ hit */
     QemuMutex intp_mutex; /* protect the intp_list IRQ state */
     bool irqfd_allowed; /* debug option to force irqfd on/off */
+    struct VFIOPlatformDevice *parent; /* paren-child relations between VFIO dev only */
+    QLIST_ENTRY(VFIOPlatformDevice) list;
 } VFIOPlatformDevice;
 
 typedef struct VFIOPlatformDeviceClass {

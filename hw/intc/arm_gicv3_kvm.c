@@ -795,6 +795,11 @@ static void kvm_arm_gicv3_realize(DeviceState *dev, Error **errp)
         define_arm_cp_regs(cpu, gicv3_cpuif_reginfo);
     }
 
+    for (i = 0; i < s->num_irq - GIC_INTERNAL; i++) {
+        qemu_irq irq = qdev_get_gpio_in(dev, i);
+        kvm_irqchip_set_qemuirq_gsi(kvm_state, irq, i);
+    }
+
     /* Try to create the device via the device control API */
     s->dev_fd = kvm_create_device(kvm_state, KVM_DEV_TYPE_ARM_VGIC_V3, false);
     if (s->dev_fd < 0) {
