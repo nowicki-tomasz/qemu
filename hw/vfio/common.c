@@ -1079,6 +1079,8 @@ static void vfio_kvm_device_add_group(VFIOGroup *group)
         .addr = (uint64_t)(unsigned long)&group->fd,
     };
 
+    error_report("%s -------------> 1", __func__);
+
     if (!kvm_enabled()) {
         return;
     }
@@ -1095,6 +1097,8 @@ static void vfio_kvm_device_add_group(VFIOGroup *group)
 
         vfio_kvm_device_fd = cd.fd;
     }
+
+    error_report("%s -------------> 2", __func__);
 
     if (ioctl(vfio_kvm_device_fd, KVM_SET_DEVICE_ATTR, &attr)) {
         error_report("Failed to add group %d to KVM VFIO device: %m",
@@ -1212,6 +1216,8 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     int ret, fd;
     VFIOAddressSpace *space;
 
+    error_report("%s -------------> 0", __func__);
+
     space = vfio_get_address_space(as);
 
     /*
@@ -1242,6 +1248,9 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     qemu_balloon_inhibit(true);
 
     QLIST_FOREACH(container, &space->containers, next) {
+
+        error_report("%s -------------> 0 1", __func__);
+
         if (!ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &container->fd)) {
             group->container = container;
             QLIST_INSERT_HEAD(&container->group_list, group, container_next);
@@ -1250,12 +1259,16 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
         }
     }
 
+    error_report("%s -------------> 1", __func__);
+
     fd = qemu_open("/dev/vfio/vfio", O_RDWR);
     if (fd < 0) {
         error_setg_errno(errp, errno, "failed to open /dev/vfio/vfio");
         ret = -errno;
         goto put_space_exit;
     }
+
+    error_report("%s -------------> 2", __func__);
 
     ret = ioctl(fd, VFIO_GET_API_VERSION);
     if (ret != VFIO_API_VERSION) {
@@ -1264,6 +1277,8 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
         ret = -EINVAL;
         goto close_fd_exit;
     }
+
+    error_report("%s -------------> 3", __func__);
 
     container = g_malloc0(sizeof(*container));
     container->space = space;
@@ -1274,12 +1289,17 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     container->noiommu = group->noiommu;
 
     if (container->noiommu) {
+
+        error_report("%s -------------> 3 1", __func__);
+
         ret = ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &fd);
         if (ret) {
             error_report("vfio: failed to set group container: %m");
             ret = -errno;
             goto free_container_exit;
         }
+
+        error_report("%s -------------> 3 2", __func__);
 
         ret = ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_NOIOMMU_IOMMU);
         if (!ret) {
@@ -1288,6 +1308,8 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
             goto free_container_exit;
         }
 
+        error_report("%s -------------> 3 3", __func__);
+
         ret = ioctl(fd, VFIO_SET_IOMMU, VFIO_NOIOMMU_IOMMU);
         if (ret) {
             error_report("vfio: failed to set iommu for container: %m");
@@ -1295,13 +1317,19 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
             goto free_container_exit;
         }
 
+        error_report("%s -------------> 3 4", __func__);
+
         goto listener_register;
     }
+
+    error_report("%s -------------> 4", __func__);
 
     ret = vfio_init_container(container, group->fd, errp);
     if (ret) {
         goto free_container_exit;
     }
+
+    error_report("%s -------------> 5", __func__);
 
     switch (container->iommu_type) {
     case VFIO_TYPE1v2_IOMMU:
@@ -1396,6 +1424,8 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     }
     }
 
+    error_report("%s -------------> 6", __func__);
+
     vfio_kvm_device_add_group(group);
 
     QLIST_INIT(&container->group_list);
@@ -1405,6 +1435,9 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
     QLIST_INSERT_HEAD(&container->group_list, group, container_next);
 
 listener_register:
+
+error_report("%s -------------> 7", __func__);
+
     if (!container->noiommu) {
         container->listener = vfio_memory_listener;
         memory_listener_register(&container->listener, container->space->as);
@@ -1420,6 +1453,9 @@ listener_register:
 
     return 0;
 listener_release_exit:
+
+error_report("%s -------------> 8", __func__);
+
     QLIST_REMOVE(group, container_next);
     QLIST_REMOVE(container, next);
     vfio_kvm_device_del_group(group);
@@ -1488,6 +1524,8 @@ VFIOGroup *vfio_get_group(int groupid, AddressSpace *as, Error **errp)
     char path[32];
     struct vfio_group_status status = { .argsz = sizeof(status) };
 
+    error_report("%s -------------> 0", __func__);
+
     QLIST_FOREACH(group, &vfio_group_list, next) {
         if (group->groupid == groupid) {
             /* Found it.  Now is it already in the right context? */
@@ -1515,10 +1553,14 @@ VFIOGroup *vfio_get_group(int groupid, AddressSpace *as, Error **errp)
         group->noiommu = 1;
     }
 
+    error_report("%s -------------> 1", __func__);
+
     if (ioctl(group->fd, VFIO_GROUP_GET_STATUS, &status)) {
         error_setg_errno(errp, errno, "failed to get group %d status", groupid);
         goto close_fd_exit;
     }
+
+    error_report("%s -------------> 2", __func__);
 
     if (!(status.flags & VFIO_GROUP_FLAGS_VIABLE)) {
         error_setg(errp, "group %d is not viable", groupid);
@@ -1527,6 +1569,8 @@ VFIOGroup *vfio_get_group(int groupid, AddressSpace *as, Error **errp)
                           "are bound to their vfio bus driver.\n");
         goto close_fd_exit;
     }
+
+    error_report("%s -------------> 3", __func__);
 
     group->groupid = groupid;
     QLIST_INIT(&group->device_list);
@@ -1537,11 +1581,15 @@ VFIOGroup *vfio_get_group(int groupid, AddressSpace *as, Error **errp)
         goto close_fd_exit;
     }
 
+    error_report("%s -------------> 4", __func__);
+
     if (QLIST_EMPTY(&vfio_group_list)) {
         qemu_register_reset(vfio_reset_handler, NULL);
     }
 
     QLIST_INSERT_HEAD(&vfio_group_list, group, next);
+
+    error_report("%s -------------> 5", __func__);
 
     return group;
 

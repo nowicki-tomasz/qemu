@@ -702,10 +702,14 @@ static int vfio_base_device_init(VFIODevice *vbasedev, Error **errp)
 
     trace_vfio_platform_base_device_init(vbasedev->name, groupid);
 
+    error_report("%s -------------> 0", __func__);
+
     group = vfio_get_group(groupid, &address_space_memory, errp);
     if (!group) {
         return -ENOENT;
     }
+
+    error_report("%s -------------> 1", __func__);
 
     QLIST_FOREACH(vbasedev_iter, &group->device_list, next) {
         if (strcmp(vbasedev_iter->name, vbasedev->name) == 0) {
@@ -714,11 +718,16 @@ static int vfio_base_device_init(VFIODevice *vbasedev, Error **errp)
             return -EBUSY;
         }
     }
+
+    error_report("%s -------------> 2", __func__);
+
     ret = vfio_get_device(group, vbasedev->name, vbasedev, errp);
     if (ret) {
         vfio_put_group(group);
         return ret;
     }
+
+    error_report("%s -------------> 3", __func__);
 
     ret = vfio_populate_device(vbasedev, errp);
     if (ret) {
