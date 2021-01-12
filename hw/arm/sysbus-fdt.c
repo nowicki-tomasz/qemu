@@ -1943,19 +1943,94 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
     }
 
     if (vfio_platform_match_raw(sbdev, "qcom,adreno-gmu")) {
+        char *subnode_name, *opp_node_name;
+        uint32_t subnode_phandle;
 
         if (gmu_phandle == 0)
             gmu_phandle = qemu_fdt_alloc_phandle(fdt);
 
         qemu_fdt_setprop_cell(fdt, node_name, "phandle", gmu_phandle);
+
+        /* OPP table */
+        subnode_name = g_strdup_printf("%s/opp-table", node_name);
+
+        error_report("TOMASZ opp-table subnode name is: %s\n", subnode_name);
+
+        qemu_fdt_add_subnode(fdt, subnode_name);
+        qemu_fdt_setprop_string(fdt, subnode_name, "compatible", "operating-points-v2");
+
+        subnode_phandle = qemu_fdt_alloc_phandle(fdt);
+        qemu_fdt_setprop_cell(fdt, subnode_name, "phandle", subnode_phandle);
+        qemu_fdt_setprop_cell(fdt, node_name, "operating-points-v2", subnode_phandle);
+
+        opp_node_name = g_strdup_printf("%s/opp-200000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x30);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0xbebc200);
     }
 
     if (vfio_platform_match_raw(sbdev, "qcom,adreno")) {
+        char *subnode_name, *opp_node_name;
+        uint32_t subnode_phandle;
 
         if (gmu_phandle == 0)
             gmu_phandle = qemu_fdt_alloc_phandle(fdt);
 
         qemu_fdt_setprop_cell(fdt, node_name, "qcom,gmu", gmu_phandle);
+
+        /* OPP table */
+        subnode_name = g_strdup_printf("%s/opp-table", node_name);
+
+        error_report("TOMASZ opp-table subnode name is: %s\n", subnode_name);
+
+        qemu_fdt_add_subnode(fdt, subnode_name);
+        qemu_fdt_setprop_string(fdt, subnode_name, "compatible", "operating-points-v2");
+
+        subnode_phandle = qemu_fdt_alloc_phandle(fdt);
+        qemu_fdt_setprop_cell(fdt, subnode_name, "phandle", subnode_phandle);
+        qemu_fdt_setprop_cell(fdt, node_name, "operating-points-v2", subnode_phandle);
+
+        opp_node_name = g_strdup_printf("%s/opp-650000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x140);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x6e1b80);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0x26be3680);
+
+        opp_node_name = g_strdup_printf("%s/opp-180000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x30);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x1b86e0);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0xaba9500);
+
+        opp_node_name = g_strdup_printf("%s/opp-355000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x80);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x2ee000);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0x1528dec0);
+
+        opp_node_name = g_strdup_printf("%s/opp-267000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x40);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x2ee000);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0xfea18c0);
+
+        opp_node_name = g_strdup_printf("%s/opp-430000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0xc0);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x5294a0);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0x19a14780);
+
+        opp_node_name = g_strdup_printf("%s/opp-565000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x100);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x5294a0);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0x21ad3740);
+
+        opp_node_name = g_strdup_printf("%s/opp-800000000", subnode_name);
+        qemu_fdt_add_subnode(fdt, opp_node_name);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x180);
+        qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x823020);
+        qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0x2faf0800);
     }
 
     error_report("%s 2", __func__);
