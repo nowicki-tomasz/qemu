@@ -652,8 +652,10 @@ static VFIODeviceOps vfio_platform_ops = {
  * fd retrieval, resource query.
  * Precondition: the device name must be initialized
  */
-static int vfio_base_device_init(VFIODevice *vbasedev, Error **errp)
+static int vfio_base_device_init(SysBusDevice *sbdev, Error **errp)
 {
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIODevice *vbasedev = &vdev->vbasedev;
     VFIOGroup *group;
     VFIODevice *vbasedev_iter;
     char *tmp, group_path[PATH_MAX], *group_name;
@@ -704,7 +706,7 @@ static int vfio_base_device_init(VFIODevice *vbasedev, Error **errp)
 
     error_report("%s -------------> 0", __func__);
 
-    group = vfio_get_group(groupid, &address_space_memory, errp);
+    group = vfio_get_group(groupid, platform_bus_device_iommu_address_space(sbdev), errp);
     if (!group) {
         return -ENOENT;
     }
@@ -762,7 +764,7 @@ static void vfio_platform_realize(DeviceState *dev, Error **errp)
                                 vbasedev->sysfsdev : vbasedev->name,
                                 vdev->compat);
 
-    ret = vfio_base_device_init(vbasedev, errp);
+    ret = vfio_base_device_init(sbdev, errp);
     if (ret) {
         goto out;
     }
@@ -822,6 +824,7 @@ static Property vfio_platform_dev_properties[] = {
     DEFINE_PROP_BOOL("x-irqfd", VFIOPlatformDevice, irqfd_allowed, true),
     DEFINE_PROP_LINK("parent", VFIOPlatformDevice, parent, "vfio-platform",
                      struct VFIOPlatformDevice *),
+    DEFINE_PROP_UINT32("request-id", VFIOPlatformDevice, requestid, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 

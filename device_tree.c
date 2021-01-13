@@ -484,6 +484,29 @@ uint32_t qemu_fdt_alloc_phandle(void *fdt)
     return phandle++;
 }
 
+uint32_t qemu_fdt_alloc_requestid(void *fdt)
+{
+    static int requestid = 0x0;
+
+    /*
+     * We need to find out if the user gave us special instruction at
+     * which phandle id to start allocating phandles.
+     */
+    if (!requestid) {
+        requestid = machine_requestid_start(current_machine);
+    }
+
+    if (!requestid) {
+        /*
+         * None or invalid requestid given on the command line, so fall back to
+         * default starting point.
+         */
+        requestid = 0x1;
+    }
+
+    return requestid++;
+}
+
 int qemu_fdt_nop_node(void *fdt, const char *node_path)
 {
     int r;

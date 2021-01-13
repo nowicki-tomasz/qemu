@@ -293,6 +293,33 @@ static void machine_set_phandle_start(Object *obj, Visitor *v,
     ms->phandle_start = value;
 }
 
+static void machine_get_requestid_start(Object *obj, Visitor *v,
+                                       const char *name, void *opaque,
+                                       Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+    int64_t value = ms->requestid_start;
+
+    visit_type_int(v, name, &value, errp);
+}
+
+static void machine_set_requestid_start(Object *obj, Visitor *v,
+                                       const char *name, void *opaque,
+                                       Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+    Error *error = NULL;
+    int64_t value;
+
+    visit_type_int(v, name, &value, &error);
+    if (error) {
+        error_propagate(errp, error);
+        return;
+    }
+
+    ms->requestid_start = value;
+}
+
 static char *machine_get_dt_compatible(Object *obj, Error **errp)
 {
     MachineState *ms = MACHINE(obj);
@@ -814,6 +841,12 @@ static void machine_class_init(ObjectClass *oc, void *data)
     object_class_property_set_description(oc, "phandle-start",
             "The first phandle ID we may generate dynamically", &error_abort);
 
+    object_class_property_add(oc, "request-id-start", "int",
+        machine_get_requestid_start, machine_set_requestid_start,
+        NULL, NULL, &error_abort);
+    object_class_property_set_description(oc, "request-id-start",
+            "The first request ID we may generate dynamically", &error_abort);
+
     object_class_property_add_str(oc, "dt-compatible",
         machine_get_dt_compatible, machine_set_dt_compatible, &error_abort);
     object_class_property_set_description(oc, "dt-compatible",
@@ -955,6 +988,11 @@ bool machine_usb(MachineState *machine)
 int machine_phandle_start(MachineState *machine)
 {
     return machine->phandle_start;
+}
+
+int machine_requestid_start(MachineState *machine)
+{
+    return machine->requestid_start;
 }
 
 bool machine_dump_guest_core(MachineState *machine)

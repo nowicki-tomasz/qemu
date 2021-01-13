@@ -65,6 +65,7 @@ enum {
     VIRT_GIC_ITS,
     VIRT_GIC_REDIST,
     VIRT_SMMU,
+    VIRT_SMMUV2,
     VIRT_UART,
     VIRT_MMIO,
     VIRT_RTC,
@@ -93,6 +94,8 @@ typedef enum VirtIOMMUType {
     VIRT_IOMMU_NONE,
     VIRT_IOMMU_SMMUV3,
     VIRT_IOMMU_VIRTIO,
+    VIRT_IOMMU_SMMUV2_PCI_BUS,
+    VIRT_IOMMU_SMMUV2_PLATFORM_BUS,
 } VirtIOMMUType;
 
 typedef enum VirtGICType {

@@ -153,6 +153,7 @@ static const MemMapEntry base_memmap[] = {
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
     [VIRT_SECURE_MEM] =         { 0x0e000000, 0x01000000 },
+    [VIRT_SMMUV2] =             { 0x0f000000, 0x00100000 },
     [VIRT_PCIE_MMIO] =          { 0x10000000, 0x2eff0000 },
     [VIRT_PCIE_PIO] =           { 0x3eff0000, 0x00010000 },
     [VIRT_PCIE_ECAM] =          { 0x3f000000, 0x01000000 },
@@ -188,6 +189,7 @@ static const int a15irqmap[] = {
     [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
     [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
     [VIRT_SMMU] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */
+    [VIRT_SMMUV2] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */ // FIXME
     [VIRT_PLATFORM_BUS] = 112, /* ...to 112 + PLATFORM_BUS_NUM_IRQS -1 */
 };
 
@@ -1135,8 +1137,7 @@ static void create_pcie_irq_map(const VirtMachineState *vms,
                            0x7           /* PCI irq */);
 }
 
-static void create_smmu(const VirtMachineState *vms,
-                        PCIBus *bus)
+static void create_smmu(VirtMachineState *vms, PCIBus *bus)
 {
     char *node;
     const char compat[] = "arm,smmu-v3";
@@ -1147,9 +1148,11 @@ static void create_smmu(const VirtMachineState *vms,
     const char irq_names[] = "eventq\0priq\0cmdq-sync\0gerror";
     DeviceState *dev;
 
-    if (vms->iommu != VIRT_IOMMU_SMMUV3 || !vms->iommu_phandle) {
+    if (vms->iommu != VIRT_IOMMU_SMMUV3 || vms->iommu_phandle) {
         return;
     }
+
+    vms->iommu_phandle = qemu_fdt_alloc_phandle(vms->fdt);
 
     dev = qdev_create(NULL, "arm-smmuv3");
 
@@ -1181,6 +1184,69 @@ static void create_smmu(const VirtMachineState *vms,
     qemu_fdt_setprop(vms->fdt, node, "dma-coherent", NULL, 0);
 
     qemu_fdt_setprop_cell(vms->fdt, node, "#iommu-cells", 1);
+
+    qemu_fdt_setprop_cell(vms->fdt, node, "phandle", vms->iommu_phandle);
+    g_free(node);
+}
+
+static void create_smmuv2(VirtMachineState *vms, Object *bus)
+{
+    const char compat[] = "arm,smmu-v2";
+    int irq =  vms->irqmap[VIRT_SMMUV2];
+    hwaddr base = vms->memmap[VIRT_SMMUV2].base;
+    hwaddr size = vms->memmap[VIRT_SMMUV2].size;
+    uint64_t num_irqs = 1; // Global irq
+    uint32_t *irq_attr;
+    DeviceState *dev;
+    char *node;
+    int i;
+
+    if ((vms->iommu != VIRT_IOMMU_SMMUV2_PCI_BUS &&
+         vms->iommu != VIRT_IOMMU_SMMUV2_PLATFORM_BUS) ||
+         vms->iommu_phandle) {
+        return;
+    }
+
+    vms->iommu_phandle = qemu_fdt_alloc_phandle(vms->fdt);
+
+    dev = qdev_create(NULL, "arm-smmuv2");
+
+    if (!!object_dynamic_cast(bus, TYPE_PLATFORM_BUS_DEVICE)) {
+        error_report("%s: PLATFORM BUS\n", __func__);
+        object_property_set_link(OBJECT(dev), bus, "platform-bus",
+                                 &error_abort);
+    } else if (!!object_dynamic_cast(bus, TYPE_PCI_BUS)) {
+        error_report("%s: PCI BUS\n", __func__);
+        object_property_set_link(OBJECT(dev), bus, "primary-bus",
+                                 &error_abort);
+    }
+
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+
+    num_irqs += object_property_get_uint(OBJECT(dev), "num-cb", &error_abort);
+    for (i = 0; i < num_irqs; i++) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                           qdev_get_gpio_in(vms->gic, irq + i));
+    }
+
+    node = g_strdup_printf("/smmuv2@%" PRIx64, base);
+    qemu_fdt_add_subnode(vms->fdt, node);
+    qemu_fdt_setprop(vms->fdt, node, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop_sized_cells(vms->fdt, node, "reg", 2, base, 2, size);
+
+    irq_attr = g_new(uint32_t, num_irqs * 3);
+    for (i = 0; i < num_irqs; i++) {
+        irq_attr[3 * i] = cpu_to_be32(GIC_FDT_IRQ_TYPE_SPI);
+        irq_attr[3 * i + 1] = cpu_to_be32(irq + i);
+        irq_attr[3 * i + 2] = cpu_to_be32(GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+    }
+    qemu_fdt_setprop(vms->fdt, node, "interrupts",
+                     irq_attr, num_irqs * 3 * sizeof(uint32_t));
+    g_free(irq_attr);
+
+    qemu_fdt_setprop_cell(vms->fdt, node, "#iommu-cells", 2);
+    qemu_fdt_setprop_cell(vms->fdt, node, "#global-interrupts", 1);
 
     qemu_fdt_setprop_cell(vms->fdt, node, "phandle", vms->iommu_phandle);
     g_free(node);
@@ -1329,16 +1395,19 @@ static void create_pcie(VirtMachineState *vms)
     create_pcie_irq_map(vms, vms->gic_phandle, irq, nodename);
 
     if (vms->iommu) {
-        vms->iommu_phandle = qemu_fdt_alloc_phandle(vms->fdt);
-
         switch (vms->iommu) {
         case VIRT_IOMMU_SMMUV3:
             create_smmu(vms, pci->bus);
             qemu_fdt_setprop_cells(vms->fdt, nodename, "iommu-map",
                                    0x0, vms->iommu_phandle, 0x0, 0x10000);
             break;
+        case VIRT_IOMMU_SMMUV2_PCI_BUS:
+            create_smmuv2(vms, OBJECT(pci->bus));
+            qemu_fdt_setprop_cells(vms->fdt, nodename, "iommu-map",
+                                   0x0, vms->iommu_phandle, 0x0, 0x10000);
+            break;
         default:
-            g_assert_not_reached();
+            break;
         }
     }
 }
@@ -1366,6 +1435,16 @@ static void create_platform_bus(VirtMachineState *vms)
     memory_region_add_subregion(sysmem,
                                 vms->memmap[VIRT_PLATFORM_BUS].base,
                                 sysbus_mmio_get_region(s, 0));
+
+    if (vms->iommu) {
+        switch (vms->iommu) {
+        case VIRT_IOMMU_SMMUV2_PLATFORM_BUS:
+            create_smmuv2(vms, OBJECT(dev));
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 static void create_secure_ram(VirtMachineState *vms,
@@ -1995,6 +2074,10 @@ static char *virt_get_iommu(Object *obj, Error **errp)
         return g_strdup("none");
     case VIRT_IOMMU_SMMUV3:
         return g_strdup("smmuv3");
+    case VIRT_IOMMU_SMMUV2_PLATFORM_BUS:
+        return g_strdup("smmuv2-platform-bus");
+    case VIRT_IOMMU_SMMUV2_PCI_BUS:
+        return g_strdup("smmuv2-pci-bus");
     default:
         g_assert_not_reached();
     }
@@ -2006,6 +2089,10 @@ static void virt_set_iommu(Object *obj, const char *value, Error **errp)
 
     if (!strcmp(value, "smmuv3")) {
         vms->iommu = VIRT_IOMMU_SMMUV3;
+    } else if (!strcmp(value, "smmuv2-platform-bus")) {
+        vms->iommu = VIRT_IOMMU_SMMUV2_PLATFORM_BUS;
+    } else if (!strcmp(value, "smmuv2-pci-bus")) {
+        vms->iommu = VIRT_IOMMU_SMMUV2_PCI_BUS;
     } else if (!strcmp(value, "none")) {
         vms->iommu = VIRT_IOMMU_NONE;
     } else {

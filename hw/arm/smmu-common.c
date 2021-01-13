@@ -330,6 +330,7 @@ static AddressSpace *smmu_find_add_as(PCIBus *bus, void *opaque, int devfn)
         sdev->smmu = s;
         sdev->bus = bus;
         sdev->devfn = devfn;
+        sdev->dev_type = SMMU_DEV_PCI;
 
         memory_region_init_iommu(&sdev->iommu, sizeof(sdev->iommu),
                                  s->mrtypename,
@@ -359,6 +360,48 @@ IOMMUMemoryRegion *smmu_iommu_mr(SMMUState *s, uint32_t sid)
         }
     }
     return NULL;
+}
+
+static AddressSpace *platform_smmu_find_add_as(PlatformBusDevice *pbus,
+                                               void *opaque,
+                                               SysBusDevice *sbdev)
+{
+    SMMUState *s = opaque;
+    SMMUPlatformBus *spbus = g_hash_table_lookup(s->smmu_platformbus_by_busptr, pbus);
+    SMMUDevice *sdev;
+    static unsigned int index;
+
+    if (!spbus) {
+        spbus = g_malloc0(sizeof(SMMUPlatformBus));
+        spbus->pbus = pbus;
+        g_hash_table_insert(s->smmu_platformbus_by_busptr, pbus, spbus);
+        spbus->smmu_platformdev_by_devptr = g_hash_table_new(NULL, NULL);
+    }
+
+    sdev = g_hash_table_lookup(spbus->smmu_platformdev_by_devptr, sbdev);
+    if (!sdev) {
+        char *name = g_strdup_printf("%s-%d", s->mrtypename, index++);
+
+        sdev = g_new0(SMMUDevice, 1);
+
+        sdev->smmu = s;
+        sdev->pbus = pbus;
+        sdev->sbdev = sbdev;
+        sdev->sid = object_property_get_uint(OBJECT(sbdev), "request-id", &error_abort);
+        sdev->dev_type = SMMU_DEV_PLATFORM;
+
+        memory_region_init_iommu(&sdev->iommu, sizeof(sdev->iommu),
+                                 s->mrtypename,
+                                 OBJECT(s), name, 1ULL << SMMU_MAX_VA_BITS);
+        address_space_init(&sdev->as,
+                           MEMORY_REGION(&sdev->iommu), name);
+        g_hash_table_insert(spbus->smmu_platformdev_by_devptr, sbdev, sdev);
+
+        trace_smmu_add_mr(name);
+        g_free(name);
+    }
+
+    return &sdev->as;
 }
 
 static guint smmu_iotlb_key_hash(gconstpointer v)
@@ -435,9 +478,12 @@ static void smmu_base_realize(DeviceState *dev, Error **errp)
     s->iotlb = g_hash_table_new_full(smmu_iotlb_key_hash, smmu_iotlb_key_equal,
                                      g_free, g_free);
     s->smmu_pcibus_by_busptr = g_hash_table_new(NULL, NULL);
+    s->smmu_platformbus_by_busptr = g_hash_table_new(NULL, NULL);
 
     if (s->primary_bus) {
         pci_setup_iommu(s->primary_bus, smmu_find_add_as, s);
+    } else if (s->pbus) {
+        platform_bus_setup_iommu(s->pbus, platform_smmu_find_add_as, s);
     } else {
         error_setg(errp, "SMMU is not attached to any PCI bus!");
     }
@@ -454,6 +500,7 @@ static void smmu_base_reset(DeviceState *dev)
 static Property smmu_dev_properties[] = {
     DEFINE_PROP_UINT8("bus_num", SMMUState, bus_num, 0),
     DEFINE_PROP_LINK("primary-bus", SMMUState, primary_bus, "PCI", PCIBus *),
+    DEFINE_PROP_LINK("platform-bus", SMMUState, pbus, "platform", PlatformBusDevice *),
     DEFINE_PROP_END_OF_LIST(),
 };
 

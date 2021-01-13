@@ -24,6 +24,7 @@
 #include "hw/qdev-properties.h"
 #include "qemu/error-report.h"
 #include "qemu/module.h"
+#include "exec/address-spaces.h"
 
 
 /*
@@ -72,6 +73,25 @@ hwaddr platform_bus_get_mmio_addr(PlatformBusDevice *pbus, SysBusDevice *sbdev,
     }
 
     return object_property_get_uint(OBJECT(sbdev_mr), "addr", NULL);
+}
+
+AddressSpace *platform_bus_device_iommu_address_space(SysBusDevice *sbdev)
+{
+    DeviceState *platform_bus_dev = qdev_find_recursive(sysbus_get_default(),
+                                                     TYPE_PLATFORM_BUS_DEVICE);
+    PlatformBusDevice *iommu_bus = PLATFORM_BUS_DEVICE(platform_bus_dev);
+
+    if (iommu_bus && iommu_bus->iommu_fn) {
+        return iommu_bus->iommu_fn(iommu_bus, iommu_bus->iommu_opaque, sbdev);
+    }
+    return &address_space_memory;
+}
+
+void platform_bus_setup_iommu(PlatformBusDevice *pbus, PlatformBusIOMMUFunc fn,
+                              void *opaque)
+{
+    pbus->iommu_fn = fn;
+    pbus->iommu_opaque = opaque;
 }
 
 static void platform_bus_count_irqs(SysBusDevice *sbdev, void *opaque)

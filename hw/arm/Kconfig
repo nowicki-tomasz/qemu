@@ -8,6 +8,8 @@ config ARM_VIRT
     imply TPM_TIS_SYSBUS
     select A15MPCORE
     select ACPI
+    select ARM_SMMU_COMMON
+    select ARM_SMMUV2
     select ARM_SMMUV3
     select GPIO_KEY
     select FW_CFG_DMA
@@ -414,6 +416,12 @@ config FSL_IMX7
     select PCI_EXPRESS_DESIGNWARE
     select SDHCI
     select UNIMP
+
+config ARM_SMMU_COMMON
+    bool
+
+config ARM_SMMUV2
+    bool
 
 config ARM_SMMUV3
     bool

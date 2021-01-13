@@ -31,6 +31,7 @@
 #include <fnmatch.h>
 #endif
 #include "hw/arm/sysbus-fdt.h"
+#include "hw/arm/virt.h"
 #include "qemu/error-report.h"
 #include "sysemu/device_tree.h"
 #include "sysemu/tpm.h"
@@ -2224,8 +2225,9 @@ static int add_qcom_trogdor_dwc3_child_node(SysBusDevice *sbdev, void *opaque,
     void *fdt_guest = data->fdt;
     VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
     VFIODevice *vbasedev = &vdev->vbasedev;
-    uint32_t *reg_attr, *irq_attr, *guest_clk_phandle;
+    uint32_t *reg_attr, *irq_attr, *guest_clk_phandle, *iommu_attr;
     uint32_t phandle;
+    uint32_t sid;
     char *node_name;
     uint64_t mmio_base;
     int i, irq_number;
@@ -2276,6 +2278,16 @@ static int add_qcom_trogdor_dwc3_child_node(SysBusDevice *sbdev, void *opaque,
                          irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
         g_free(irq_attr);
     }
+
+    sid = qemu_fdt_alloc_requestid(fdt_guest);
+    iommu_attr = g_new(uint32_t, 3);
+    iommu_attr[0] = cpu_to_be32(VIRT_MACHINE(current_machine)->iommu_phandle);
+    iommu_attr[1] = cpu_to_be32(sid);
+    iommu_attr[2] = cpu_to_be32(0);
+    qemu_fdt_setprop(fdt_guest, node_name, "iommus", iommu_attr,
+                     3 * sizeof(uint32_t));
+    g_free(iommu_attr);
+    object_property_set_uint(OBJECT(sbdev), sid, "request-id", &error_abort);
 
     guest_clk_phandle = g_new(uint32_t, vbasedev->num_clks);
     for (i = 0; i < vbasedev->num_clks;  i++) {
@@ -4288,7 +4300,7 @@ static const BindingEntry bindings[] = {
             add_qcom_trogdor_fdt_node, qcom_trogdor_backlight_properties),
     VFIO_PLATFORM_BINDING("boe,nv133fhm-n62",
             add_qcom_trogdor_fdt_node, qcom_trogdor_panel_properties),
-    VFIO_PLATFORM_BINDING("snps,dwc3", no_fdt_node, NULL),
+//    VFIO_PLATFORM_BINDING("snps,dwc3", no_fdt_node, NULL),
 //    VFIO_PLATFORM_BINDING("snps,dwc3",
 //            add_qcom_trogdor_dwc3_child_node, qcom_trogdor_xhci_properties),
     VFIO_PLATFORM_BINDING("qcom,adreno",

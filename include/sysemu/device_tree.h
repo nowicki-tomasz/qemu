@@ -99,6 +99,7 @@ uint32_t qemu_fdt_getprop_cell(void *fdt, const char *node_path,
                                Error **errp);
 uint32_t qemu_fdt_get_phandle(void *fdt, const char *path);
 uint32_t qemu_fdt_alloc_phandle(void *fdt);
+uint32_t qemu_fdt_alloc_requestid(void *fdt);
 int qemu_fdt_nop_node(void *fdt, const char *node_path);
 int qemu_fdt_add_subnode(void *fdt, const char *name);
 

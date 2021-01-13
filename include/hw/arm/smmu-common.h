@@ -21,6 +21,7 @@
 
 #include "hw/sysbus.h"
 #include "hw/pci/pci.h"
+#include "hw/platform-bus.h"
 
 #define SMMU_PCI_BUS_MAX      256
 #define SMMU_PCI_DEVFN_MAX    256
@@ -73,10 +74,19 @@ typedef struct SMMUTransCfg {
     uint32_t iotlb_misses;     /* counts IOTLB misses for this asid */
 } SMMUTransCfg;
 
+typedef enum {
+    SMMU_DEV_PCI,
+    SMMU_DEV_PLATFORM,
+} SMMUDeviceType;
+
 typedef struct SMMUDevice {
     void               *smmu;
+    SMMUDeviceType     dev_type;
     PCIBus             *bus;
     int                devfn;
+    PlatformBusDevice  *pbus;
+    SysBusDevice       *sbdev;
+    uint32_t           sid;
     IOMMUMemoryRegion  iommu;
     AddressSpace       as;
     uint32_t           cfg_cache_hits;
@@ -88,6 +98,11 @@ typedef struct SMMUPciBus {
     PCIBus       *bus;
     SMMUDevice   *pbdev[]; /* Parent array is sparse, so dynamically alloc */
 } SMMUPciBus;
+
+typedef struct SMMUPlatformBus {
+    PlatformBusDevice *pbus;
+    GHashTable *smmu_platformdev_by_devptr;
+} SMMUPlatformBus;
 
 typedef struct SMMUIOTLBKey {
     uint64_t iova;
@@ -101,6 +116,7 @@ typedef struct SMMUState {
     MemoryRegion iomem;
 
     GHashTable *smmu_pcibus_by_busptr;
+    GHashTable *smmu_platformbus_by_busptr;
     GHashTable *configs; /* cache for configuration data */
     GHashTable *iotlb;
     SMMUPciBus *smmu_pcibus_by_bus_num[SMMU_PCI_BUS_MAX];
@@ -108,6 +124,7 @@ typedef struct SMMUState {
     QLIST_HEAD(, SMMUDevice) devices_with_notifiers;
     uint8_t bus_num;
     PCIBus *primary_bus;
+    PlatformBusDevice *pbus;
 } SMMUState;
 
 typedef struct {
@@ -133,7 +150,12 @@ SMMUPciBus *smmu_find_smmu_pcibus(SMMUState *s, uint8_t bus_num);
 /* Return the stream ID of an SMMU device */
 static inline uint16_t smmu_get_sid(SMMUDevice *sdev)
 {
-    return PCI_BUILD_BDF(pci_bus_num(sdev->bus), sdev->devfn);
+    if (sdev->dev_type == SMMU_DEV_PCI)
+        return PCI_BUILD_BDF(pci_bus_num(sdev->bus), sdev->devfn);
+    else if (sdev->dev_type == SMMU_DEV_PLATFORM)
+        return sdev->sid;
+
+    return 0;
 }
 
 /**

@@ -34,6 +34,10 @@ typedef struct PlatformBusDevice PlatformBusDevice;
 #define PLATFORM_BUS_DEVICE_GET_CLASS(obj) \
      OBJECT_GET_CLASS(PlatformBusDeviceClass, (obj), TYPE_PLATFORM_BUS_DEVICE)
 
+struct PlatformBusDevice;
+typedef AddressSpace *(*PlatformBusIOMMUFunc)(PlatformBusDevice *, void *,
+                                              SysBusDevice *);
+
 struct PlatformBusDevice {
     /*< private >*/
     SysBusDevice parent_obj;
@@ -45,6 +49,9 @@ struct PlatformBusDevice {
     uint32_t num_irqs;
     qemu_irq *irqs;
     unsigned long *used_irqs;
+
+    PlatformBusIOMMUFunc iommu_fn;
+    void *iommu_opaque;
 };
 
 int platform_bus_get_irqn(PlatformBusDevice *platform_bus, SysBusDevice *sbdev,
@@ -53,5 +60,10 @@ hwaddr platform_bus_get_mmio_addr(PlatformBusDevice *pbus, SysBusDevice *sbdev,
                                   int n);
 
 void platform_bus_link_device(PlatformBusDevice *pbus, SysBusDevice *sbdev);
+
+AddressSpace *platform_bus_device_iommu_address_space(SysBusDevice *sbdev);
+
+void platform_bus_setup_iommu(PlatformBusDevice *pbus, PlatformBusIOMMUFunc fn,
+                              void *opaque);
 
 #endif /* HW_PLATFORM_BUS_H */

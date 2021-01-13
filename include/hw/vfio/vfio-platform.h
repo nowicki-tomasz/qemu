@@ -60,6 +60,7 @@ typedef struct VFIOPlatformDevice {
     QemuMutex intp_mutex; /* protect the intp_list IRQ state */
     bool irqfd_allowed; /* debug option to force irqfd on/off */
     struct VFIOPlatformDevice *parent; /* paren-child relations between VFIO dev only */
+    uint32_t requestid;
     QLIST_ENTRY(VFIOPlatformDevice) list;
 } VFIOPlatformDevice;
 
