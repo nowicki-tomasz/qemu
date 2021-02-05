@@ -99,8 +99,8 @@ static int smmu_stream_id_match(SMMUv2State *s, uint32_t sid, SMMUTransCfg *cfg,
         return 0;
     case S2CR_TYPE_FAULT:
         status->status = SMMU_TRANS_ERROR;
-        status->type = SMMU_FAULT_GLOBAL_INVAL_CTX;
-        return -EINVAL;
+        cfg->aborted = true;
+        return 0;
     default:
         g_assert_not_reached();
     }
@@ -288,6 +288,14 @@ static int smmuv2_decode_config(SMMUDevice *sdev, SMMUTransCfg *cfg,
         return -EINVAL;
     }
 
+    if (cfg->aborted || cfg->bypassed) {
+
+        error_report("%s sid=0x%"PRIx32" aborted or bypassed",
+                     __func__, sid);
+
+        return 0;
+    }
+
     ret = smmu_decode_cbar(s, cfg, status);
     if (ret) {
 
@@ -295,14 +303,6 @@ static int smmuv2_decode_config(SMMUDevice *sdev, SMMUTransCfg *cfg,
                      __func__, sid);
 
         return ret;
-    }
-
-    if (cfg->aborted || cfg->bypassed) {
-
-        error_report("%s sid=0x%"PRIx32" aborted or bypassed",
-                     __func__, sid);
-
-        return 0;
     }
 
     ret = decode_ctx(s, cfg, status);
@@ -441,7 +441,10 @@ static IOMMUTLBEntry smmuv2_translate(IOMMUMemoryRegion *mr, hwaddr addr,
     }
 
     if (cfg->aborted) {
-        status.status = SMMU_TRANS_ABORT;
+        status.type = SMMU_FAULT_CTX_TRANS;
+        status.addr = addr;
+        status.flag = flag & 0x1;
+        status.status = SMMU_TRANS_ERROR;
 
         error_report("%s iova=0x%"PRIx64" smmu aborted",
                      mr->parent_obj.name, addr);
@@ -778,6 +781,15 @@ static void smmu_gats1pr(RegisterInfo *reg, uint64_t val)
     smmu_gat(s, addr, cb, false);
 }
 
+static void smmuv2_inv_notifiers_all(RegisterInfo *reg, uint64_t val)
+{
+    SMMUv2State *s = ARM_SMMUV2(reg->opaque);
+    SMMUState *bs = ARM_SMMU(s);
+
+    smmu_inv_notifiers_all(&s->smmu_state);
+    smmu_iotlb_inv_all(bs);
+}
+
 static void smmu_gats1pw(RegisterInfo *reg, uint64_t val)
 {
     SMMUv2State *s = ARM_SMMUV2(reg->opaque);
@@ -820,6 +832,169 @@ static void smmu_fsr_pw(RegisterInfo *reg, uint64_t val)
         smmu_update_ctx_irq(s, i);
     }
 }
+
+static void smmuv2_flush_config(SMMUDevice *sdev)
+{
+    SMMUv2State *s = sdev->smmu;
+    SMMUState *bc = &s->smmu_state;
+
+//    trace_smmuv3_config_cache_inv(smmu_get_sid(sdev));
+    g_hash_table_remove(bc->configs, sdev);
+}
+
+static void smmuv2_notify_config_change(RegisterInfo *reg, uint64_t val)
+{
+#ifdef __linux__
+    SMMUv2State *s = ARM_SMMUV2(reg->opaque);
+    SMMUState *bs = &s->smmu_state;
+    SMMUv2Status status = { .type = SMMU_FAULT_CTX_NONE };
+    IOMMUConfig iommu_config = { };
+    uint32_t smr, smr_idx, mask, sid, tcr, a1;
+    IOMMUMemoryRegion *mr;
+    unsigned int cb_offset;
+    SMMUTransCfg *cfg;
+    SMMUDevice *sdev;
+    uint64_t ttbr;
+    bool valid;
+    int ret;
+
+    /* Fist find our SID in corresponding SMR register... */
+    smr_idx = (reg->access->addr - A_SMMU_S2CR0) / 4;
+    smr = s->regs[R_SMMU_SMR0 + smr_idx];
+    valid = FIELD_EX32(smr, SMMU_SMR0, VALID);
+    sid = FIELD_EX32(smr, SMMU_SMR0, ID);
+    mask = FIELD_EX32(smr, SMMU_SMR0, MASK);
+    if (!valid) {
+        error_report("%s SMR[%d] is not valid", __func__, (int)smr_idx);
+        return;
+    }
+
+    error_report("%s SMR[%d] is valid -> SID 0x%x mask 0x%x",
+            __func__, (int)smr_idx, sid, mask);
+
+
+    /* ... then lookup IOMMU memory region */
+    mr = smmu_find_smmu_platform_dev(bs, sid);
+    if (!mr) {
+        error_report("%s IOMMU memory region not found", __func__);
+        return;
+    }
+
+    error_report("%s IOMMU memory region found", __func__);
+
+    sdev = container_of(mr, SMMUDevice, iommu);
+    assert(sdev->smmu == bs);
+
+    /* flush QEMU config cache */
+    smmuv2_flush_config(sdev);
+
+    if (sdev->dev_type == SMMU_DEV_PCI) {
+        error_report("%s SMMU_DEV_PCI dev", __func__);
+        ret = !pci_device_is_pasid_ops_set(sdev->bus, sdev->devfn);
+    } else if (sdev->dev_type == SMMU_DEV_PLATFORM) {
+        error_report("%s SMMU_DEV_PLATFORM dev", __func__);
+        ret = !vfio_platform_device_is_pasid_ops_set(sdev->sbdev);
+    }
+
+    if (ret)
+        return;
+
+    status.sid = sid;
+    cfg = smmuv2_get_config(sdev, &status);
+    if (!cfg) {
+        error_report("%s cfg not found", __func__);
+        return;
+    }
+
+    iommu_config.pasid_cfg.version = PASID_TABLE_CFG_VERSION_1;
+    iommu_config.pasid_cfg.format = IOMMU_PASID_FORMAT_SMMUV2;
+    iommu_config.pasid_cfg.smmuv2.version = PASID_TABLE_SMMUV2_CFG_VERSION_1;
+
+    s = sdev->smmu;
+    cb_offset = smmu_cb_offset(s, status.cb);
+
+    /* TTBRs */
+    ttbr = s->regs[R_SMMU_CB0_TTBR0_HIGH + cb_offset];
+    ttbr <<= 32;
+    ttbr |= s->regs[R_SMMU_CB0_TTBR0_LOW + cb_offset];
+    iommu_config.pasid_cfg.smmuv2.ttbr[0] = ttbr;
+
+    ttbr = s->regs[R_SMMU_CB0_TTBR1_HIGH + cb_offset];
+    ttbr <<= 32;
+    ttbr |= s->regs[R_SMMU_CB0_TTBR1_LOW + cb_offset];
+    iommu_config.pasid_cfg.smmuv2.ttbr[1] = ttbr;
+
+    /* ASID */
+    tcr = s->regs[R_SMMU_CB0_TCR_LPAE + cb_offset];
+    a1 = FIELD_EX32(tcr, SMMU_CB0_TCR_LPAE, A1);
+    if (a1) {
+        ttbr = s->regs[R_SMMU_CB0_TTBR1_HIGH + cb_offset];
+        iommu_config.pasid_cfg.smmuv2.asid = FIELD_EX32(ttbr, SMMU_CB0_TTBR1_HIGH, ASID);
+    } else {
+        ttbr = s->regs[R_SMMU_CB0_TTBR0_HIGH + cb_offset];
+        iommu_config.pasid_cfg.smmuv2.asid = FIELD_EX32(ttbr, SMMU_CB0_TTBR0_HIGH, ASID);
+    }
+
+    /* TCR and MAIR */
+    iommu_config.pasid_cfg.smmuv2.tcr[0] = s->regs[R_SMMU_CB0_TCR_LPAE + cb_offset];
+    iommu_config.pasid_cfg.smmuv2.tcr[1] = s->regs[R_SMMU_CB0_TCR2 + cb_offset];
+
+    iommu_config.pasid_cfg.smmuv2.mair[0] = s->regs[R_SMMU_CB0_PRRR_MAIR0 + cb_offset];
+    iommu_config.pasid_cfg.smmuv2.mair[1] = s->regs[R_SMMU_CB0_NMRR_MAIR1 + cb_offset];
+
+    /* We don't support S1 32bit page-tables yet */
+    if (!FIELD_EX32(s->regs[R_SMMU_CBA2R0 + status.cb], SMMU_CBA2R0, VA64)) {
+        error_report("SMMU does not support S1 32bit page-tables yet");
+        g_assert_not_reached();
+    }
+    iommu_config.pasid_cfg.smmuv2.s1fmt = ASID_TABLE_SMMUV2_CTX_FMT_AARCH64;
+
+    if (cfg->disabled || cfg->bypassed) {
+        iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_BYPASS;
+    } else if (cfg->aborted) {
+        iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_ABORT;
+    } else {
+        iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_TRANSLATE;
+    }
+
+//    trace_smmuv3_notify_config_change(mr->parent_obj.name,
+//                                      iommu_config.pasid_cfg.config,
+//                                      iommu_config.pasid_cfg.base_ptr);
+
+    if (sdev->dev_type == SMMU_DEV_PCI)
+        ret = pci_device_set_pasid_table(sdev->bus, sdev->devfn, &iommu_config);
+    else if (sdev->dev_type == SMMU_DEV_PLATFORM)
+        ret = vfio_platform_device_set_pasid_table(sdev->sbdev, &iommu_config);
+
+    if (ret)
+        error_report("Failed to pass PASID table to host for iommu mr %s (%m)",
+                     mr->parent_obj.name);
+    else
+        error_report("Passed PASID table to host for iommu mr %s (%m)",
+                     mr->parent_obj.name);
+#endif
+}
+
+//static void smmuv2_s2cr(RegisterInfo *reg, uint64_t val)
+//{
+//    SMMUv2State *s = ARM_SMMUV2(reg->opaque);
+//    uint32_t s2cr = s->regs[(reg->access->addr / 4)];
+//    uint32_t type, cb, smr_idx;
+//
+//    type = FIELD_EX32(s2cr, SMMU_S2CR0, TYPE);
+//    if (type == S2CR_TYPE_TRANS) {
+//        cb = FIELD_EX32(s2cr, SMMU_S2CR0, CBNDX_VMID);
+//        smr_idx = (reg->access->addr - A_SMMU_S2CR0) / 4;
+//        s->cb_to_s2cr[cb] =
+//    }
+//
+//
+//}
+//
+//static void smmuv2_sctlr(RegisterInfo *reg, uint64_t val)
+//{
+//
+//}
 
 static const RegisterAccessInfo smmu500_regs_info[] = {
     /* Manually added.  */
@@ -878,8 +1053,11 @@ static const RegisterAccessInfo smmu500_regs_info[] = {
         .ro = 0x40,
     },{ .name = "SMMU_SGFSYNR1",  .addr = A_SMMU_SGFSYNR1,
     },{ .name = "SMMU_STLBIALL",  .addr = A_SMMU_STLBIALL,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "SMMU_TLBIVMID",  .addr = A_SMMU_TLBIVMID,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "SMMU_TLBIALLNSNH",  .addr = A_SMMU_TLBIALLNSNH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "SMMU_STLBGSYNC",  .addr = A_SMMU_STLBGSYNC,
     },{ .name = "SMMU_STLBGSTATUS",  .addr = A_SMMU_STLBGSTATUS,
         .ro = 0x1,
@@ -891,9 +1069,12 @@ static const RegisterAccessInfo smmu500_regs_info[] = {
         .ro = 0xffffffff,
     },{ .name = "SMMU_STLBIVALM_LOW",  .addr = A_SMMU_STLBIVALM_LOW,
     },{ .name = "SMMU_STLBIVALM_HIGH",  .addr = A_SMMU_STLBIVALM_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "SMMU_STLBIVAM_LOW",  .addr = A_SMMU_STLBIVAM_LOW,
     },{ .name = "SMMU_STLBIVAM_HIGH",  .addr = A_SMMU_STLBIVAM_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "SMMU_STLBIALLM",  .addr = A_SMMU_STLBIALLM,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "SMMU_NSCR0",  .addr = A_SMMU_NSCR0,
         .reset = 0x200001,
         .ro = 0x200330,
@@ -1092,18 +1273,26 @@ static const RegisterAccessInfo smmu_cb_page_regs_info[] = {
     },{ .name = "IPAFAR_HIGH",  .addr = A_SMMU_CB0_IPAFAR_HIGH,
     },{ .name = "TLBIVA_LOW",  .addr = A_SMMU_CB0_TLBIVA_LOW,
     },{ .name = "TLBIVA_HIGH",  .addr = A_SMMU_CB0_TLBIVA_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIVAA_LOW",  .addr = A_SMMU_CB0_TLBIVAA_LOW,
     },{ .name = "TLBIVAA_HIGH",  .addr = A_SMMU_CB0_TLBIVAA_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIASID",  .addr = A_SMMU_CB0_TLBIASID,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIALL",  .addr = A_SMMU_CB0_TLBIALL,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIVAL_LOW",  .addr = A_SMMU_CB0_TLBIVAL_LOW,
     },{ .name = "TLBIVAL_HIGH",  .addr = A_SMMU_CB0_TLBIVAL_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIVAAL_LOW",  .addr = A_SMMU_CB0_TLBIVAAL_LOW,
     },{ .name = "TLBIVAAL_HIGH",  .addr = A_SMMU_CB0_TLBIVAAL_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIIPAS2_LOW",  .addr = A_SMMU_CB0_TLBIIPAS2_LOW,
     },{ .name = "TLBIIPAS2_HIGH",  .addr = A_SMMU_CB0_TLBIIPAS2_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBIIPAS2L_LOW",  .addr = A_SMMU_CB0_TLBIIPAS2L_LOW,
     },{ .name = "TLBIIPAS2L_HIGH",  .addr = A_SMMU_CB0_TLBIIPAS2L_HIGH,
+        .post_write = smmuv2_inv_notifiers_all,
     },{ .name = "TLBSYNC",  .addr = A_SMMU_CB0_TLBSYNC,
     },{ .name = "TLBSTATUS",  .addr = A_SMMU_CB0_TLBSTATUS,
         .ro = 0x1,
@@ -1201,6 +1390,7 @@ static void smmu_create_rai_smr(SMMUv2State *s)
         s->rai_smr[i * 2].addr = A_SMMU_SMR0 + i * 4;
         s->rai_smr[i * 2 + 1].name = g_strdup_printf("SMMU_S2CR%d", i);
         s->rai_smr[i * 2 + 1].addr = A_SMMU_S2CR0 + i * 4;
+        s->rai_smr[i * 2 + 1].post_write = smmuv2_notify_config_change;
     }
 }
 
@@ -1312,6 +1502,7 @@ static void smmu_realize(DeviceState *d, Error **errp)
     SMMUv2Class *c = ARM_SMMUV2_GET_CLASS(s);
     SysBusDevice *dev = SYS_BUS_DEVICE(d);
     Error *local_err = NULL;
+    int i;
 
     c->parent_realize(d, &local_err);
     if (local_err) {
@@ -1320,6 +1511,9 @@ static void smmu_realize(DeviceState *d, Error **errp)
     }
 
     qemu_mutex_init(&s->mutex);
+
+    for (i = 0; i < s->cfg.num_cb; i++)
+        s->cb_to_s2cr[i] = ~0;
 
     smmu_create_regarray(s);
 
@@ -1383,6 +1577,87 @@ static int smmuv2_notify_flag_changed(IOMMUMemoryRegion *iommu,
     return 0;
 }
 
+static int smmuv2_get_attr(IOMMUMemoryRegion *iommu,
+                           enum IOMMUMemoryRegionAttr attr,
+                           void *data)
+{
+    if (attr == IOMMU_ATTR_VFIO_NESTED) {
+        *(bool *) data = true;
+        return 0;
+    } else if (attr == IOMMU_ATTR_MSI_TRANSLATE) {
+        *(bool *) data = true;
+        return 0;
+    }
+    return -EINVAL;
+}
+
+struct iommu_fault;
+
+static inline int
+smmuv2_inject_faults(IOMMUMemoryRegion *iommu_mr, int count,
+                     struct iommu_fault *buf)
+{
+#ifdef __linux__
+    SMMUDevice *sdev = container_of(iommu_mr, SMMUDevice, iommu);
+    SMMUv2State *s = sdev->smmu;
+    uint32_t sid = smmu_get_sid(sdev);
+    int i;
+
+    for (i = 0; i < count; i++) {
+        struct iommu_fault_unrecoverable *record;
+        SMMUv2Status status = {};
+
+        if (buf[i].type != IOMMU_FAULT_DMA_UNRECOV) {
+            continue;
+        }
+
+        status.sid = sid;
+        record = &buf[i].event;
+
+        switch (record->reason) {
+        case IOMMU_FAULT_REASON_PASID_INVALID:
+            status.type = SMMU_FAULT_GLOBAL_INVAL_CTX;
+            break;
+        case IOMMU_FAULT_REASON_PASID_FETCH:
+            status.type = SMMU_FAULT_GLOBAL_INVAL_CTX;
+            break;
+        case IOMMU_FAULT_REASON_BAD_PASID_ENTRY:
+            status.type = SMMU_FAULT_GLOBAL_INVAL_CTX;
+            break;
+        case IOMMU_FAULT_REASON_WALK_EABT:
+            status.type = SMMU_FAULT_CTX_TRANS;
+            status.addr = record->addr;
+            break;
+        case IOMMU_FAULT_REASON_PTE_FETCH:
+            status.type = SMMU_FAULT_CTX_TRANS;
+            status.addr = record->addr;
+            break;
+        case IOMMU_FAULT_REASON_OOR_ADDRESS:
+            status.type = SMMU_FAULT_CTX_TRANS;
+            status.addr = record->addr;
+            break;
+        case IOMMU_FAULT_REASON_ACCESS:
+            status.type = SMMU_FAULT_CTX_PERM;
+            status.addr = record->addr;
+            break;
+        case IOMMU_FAULT_REASON_PERMISSION:
+            status.type = SMMU_FAULT_CTX_PERM;
+            status.addr = record->addr;
+            break;
+        default:
+            warn_report("%s Unexpected fault reason received from host: %d",
+                        __func__, record->reason);
+            continue;
+        }
+
+        smmu_fault(s, status.cb, status.addr);
+    }
+    return 0;
+#else
+    return -1;
+#endif
+}
+
 static void smmuv2_iommu_memory_region_class_init(ObjectClass *klass,
                                                   void *data)
 {
@@ -1390,6 +1665,8 @@ static void smmuv2_iommu_memory_region_class_init(ObjectClass *klass,
 
     imrc->translate = smmuv2_translate;
     imrc->notify_flag_changed = smmuv2_notify_flag_changed;
+    imrc->get_attr = smmuv2_get_attr;
+    imrc->inject_faults = smmuv2_inject_faults;
 }
 
 static const TypeInfo smmuv2_type_info = {

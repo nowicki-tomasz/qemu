@@ -17,6 +17,7 @@
 #define HW_VFIO_VFIO_PLATFORM_H
 
 #include "hw/sysbus.h"
+#include "hw/iommu/iommu.h"
 #include "hw/vfio/vfio-common.h"
 #include "qemu/event_notifier.h"
 #include "qemu/queue.h"
@@ -46,10 +47,23 @@ typedef struct VFIOINTp {
 /* function type for user side eventfd handler */
 typedef void (*eventfd_user_side_handler_t)(VFIOINTp *intp);
 
+struct VFIOPlatformPASIDOps {
+    int (*set_pasid_table)(SysBusDevice *sbdev, IOMMUConfig *config);
+};
+typedef struct VFIOPlatformPASIDOps VFIOPlatformPASIDOps;
+
+typedef struct VFIOPlatformExtIRQ {
+    struct VFIOPlatformDevice *vdev;
+    EventNotifier notifier;
+    uint32_t index;
+} VFIOPlatformExtIRQ;
+
 typedef struct VFIOPlatformDevice {
     SysBusDevice sbdev;
     VFIODevice vbasedev; /* not a QOM object */
     VFIORegion **regions;
+    VFIORegion dma_fault_region;
+    uint32_t fault_tail_index;
     QLIST_HEAD(, VFIOINTp) intp_list; /* list of IRQs */
     /* queue of pending IRQs */
     QSIMPLEQ_HEAD(, VFIOINTp) pending_intp_queue;
@@ -62,6 +76,8 @@ typedef struct VFIOPlatformDevice {
     struct VFIOPlatformDevice *parent; /* paren-child relations between VFIO dev only */
     uint32_t requestid;
     QLIST_ENTRY(VFIOPlatformDevice) list;
+    VFIOPlatformPASIDOps *pasid_ops;
+    VFIOPlatformExtIRQ *ext_irqs;
 } VFIOPlatformDevice;
 
 typedef struct VFIOPlatformDeviceClass {
@@ -69,6 +85,10 @@ typedef struct VFIOPlatformDeviceClass {
     SysBusDeviceClass parent_class;
     /*< public >*/
 } VFIOPlatformDeviceClass;
+
+bool vfio_platform_device_is_pasid_ops_set(SysBusDevice *sbdev);
+int vfio_platform_device_set_pasid_table(SysBusDevice *sbdev,
+                                         IOMMUConfig *config);
 
 #define VFIO_PLATFORM_DEVICE(obj) \
      OBJECT_CHECK(VFIOPlatformDevice, (obj), TYPE_VFIO_PLATFORM)

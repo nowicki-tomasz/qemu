@@ -3154,6 +3154,39 @@ static int add_qcom_trogdor_geni_i2c_node(SysBusDevice *sbdev, void *opaque,
     g_free(guest_clk_phandle);
     g_free(reg_attr);
 
+    if (vbasedev->num_gpio_func > 0) {
+        error_report("%s creating %d gpio nodes",
+                     __func__, vbasedev->num_gpio_func);
+        for (i = 0; i < vbasedev->num_gpio_func;  i++) {
+            uint32_t *gpio_attr;
+            unsigned int pin;
+            char *func_name;
+            uint32_t gpio;
+
+            gpio = qemu_fdt_alloc_phandle(fdt_guest);
+            fdt_build_virtio_gpio_mmio_node(data, vdev, i, fdt_guest, gpio);
+            func_name = g_strdup_printf("%s-gpios",
+                                          vbasedev->gpio[i].gpio_func_names);
+
+            error_report("%s creating GPIO func name %s", __func__, func_name);
+            gpio_attr = g_new(uint32_t, vbasedev->gpio[i].pin_num * 3);
+            for (pin = 0; pin < vbasedev->gpio[i].pin_num; pin++) {
+                uint64_t flags = fdt_xlate_flags(vbasedev->gpio[i].flags[pin]);
+
+                error_report("%s creating GPIO func name %s pin %d flags 0x%lx xflags 0x%lx",
+                        __func__, func_name, pin, (long)vbasedev->gpio[i].flags[pin],
+                        (long)flags);
+
+                gpio_attr[(pin * 3) + 0] = cpu_to_be32(gpio);
+                gpio_attr[(pin * 3) + 1] = cpu_to_be32(pin);
+                gpio_attr[(pin * 3) + 2] = cpu_to_be32(flags);
+            }
+            qemu_fdt_setprop(fdt_guest, node_name, func_name, gpio_attr,
+                             vbasedev->gpio[i].pin_num * 3 * sizeof(uint32_t));
+            g_free(gpio_attr);
+        }
+    }
+
     error_report("\nCreating child node - start");
 
     child_data.pbus_node_name = node_name;

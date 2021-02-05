@@ -126,7 +126,9 @@ typedef struct VFIODevice {
     bool balloon_allowed;
     VFIODeviceOps *ops;
     unsigned int num_irqs;
+    unsigned int num_ext_irqs;
     unsigned int num_regions;
+    unsigned int num_ext_regions;
     unsigned int flags;
     unsigned int num_clks;
     unsigned int num_regulators;

@@ -51,6 +51,7 @@ typedef struct SMMUv2State {
     RegisterAccessInfo *rai_cb;
     uint32_t regs[R_MAX];
     RegisterInfo regs_info[R_MAX];
+    uint32_t cb_to_s2cr[R_MAX];
 } SMMUv2State;
 
 typedef struct {

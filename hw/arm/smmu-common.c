@@ -404,6 +404,36 @@ static AddressSpace *platform_smmu_find_add_as(PlatformBusDevice *pbus,
     return &sdev->as;
 }
 
+IOMMUMemoryRegion *smmu_find_smmu_platform_dev(SMMUState *s, uint32_t sid)
+{
+    DeviceState *platform_bus_dev = qdev_find_recursive(sysbus_get_default(),
+                                                     TYPE_PLATFORM_BUS_DEVICE);
+    PlatformBusDevice *iommu_bus = PLATFORM_BUS_DEVICE(platform_bus_dev);
+    SMMUPlatformBus *smmu_pci_bus;
+    GHashTableIter iter;
+    bool found = false;
+    SMMUDevice *sdev;
+
+    g_hash_table_iter_init(&iter, s->smmu_platformbus_by_busptr);
+    while (g_hash_table_iter_next(&iter, NULL, (void **)&smmu_pci_bus)) {
+        if (smmu_pci_bus->pbus == iommu_bus) {
+            found = true;
+        }
+    }
+
+    if (!found)
+        return NULL;
+
+    g_hash_table_iter_init(&iter, smmu_pci_bus->smmu_platformdev_by_devptr);
+    while (g_hash_table_iter_next(&iter, NULL, (void **)&sdev)) {
+        if (sdev->sid == sid) {
+            return &sdev->iommu;
+        }
+    }
+
+    return NULL;
+}
+
 static guint smmu_iotlb_key_hash(gconstpointer v)
 {
     SMMUIOTLBKey *key = (SMMUIOTLBKey *)v;

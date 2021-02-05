@@ -1459,6 +1459,10 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
         error_report("%s -------------> 0 1", __func__);
 
         if (!ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &container->fd)) {
+
+            error_report("%s -------------> added to existing container %d",
+                         __func__, container->fd);
+
             group->container = container;
             QLIST_INSERT_HEAD(&container->group_list, group, container_next);
             vfio_kvm_device_add_group(group);
@@ -1475,7 +1479,7 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as,
         goto put_space_exit;
     }
 
-    error_report("%s -------------> 2", __func__);
+    error_report("%s -------------> 2 new container fd = %d", __func__, fd);
 
     ret = ioctl(fd, VFIO_GET_API_VERSION);
     if (ret != VFIO_API_VERSION) {
@@ -1903,6 +1907,8 @@ int vfio_get_device(VFIOGroup *group, const char *name,
     vbasedev->num_phys = dev_info.num_phys;
     vbasedev->num_pctrl_states = dev_info.num_pctrl_states;
     vbasedev->num_gpio_func = dev_info.num_gpio;
+    vbasedev->num_ext_irqs = dev_info.num_ext_irqs;
+    vbasedev->num_ext_regions = dev_info.num_ext_regions;
 
     error_report("%s irq %d regions %d clocks %d regulators %d inter %d phys %d pctrl states %d gpios %d",
             __func__,
@@ -1988,7 +1994,7 @@ int vfio_get_dev_region_info(VFIODevice *vbasedev, uint32_t type,
 {
     int i;
 
-    for (i = 0; i < vbasedev->num_regions; i++) {
+    for (i = 0; i < vbasedev->num_regions + vbasedev->num_ext_regions; i++) {
         struct vfio_info_cap_header *hdr;
         struct vfio_region_info_cap_type *cap_type;
 
@@ -2023,7 +2029,7 @@ int vfio_get_dev_irq_info(VFIODevice *vbasedev, uint32_t type,
 {
     int i;
 
-    for (i = 0; i < vbasedev->num_irqs; i++) {
+    for (i = 0; i < vbasedev->num_irqs + vbasedev->num_ext_irqs; i++) {
         struct vfio_info_cap_header *hdr;
         struct vfio_irq_info_cap_type *cap_type;
 

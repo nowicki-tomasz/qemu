@@ -19,6 +19,7 @@
 #include <sys/ioctl.h>
 #include <linux/vfio.h>
 
+#include "hw/iommu/iommu.h"
 #include "hw/vfio/vfio-platform.h"
 #include "migration/vmstate.h"
 #include "qemu/error-report.h"
@@ -539,6 +540,61 @@ err:
     return ret;
 }
 
+static void vfio_init_fault_regions(VFIOPlatformDevice *vdev, Error **errp)
+{
+    struct vfio_region_info *fault_region_info = NULL;
+    struct vfio_region_info_cap_fault *cap_fault;
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    struct vfio_info_cap_header *hdr;
+    char *fault_region_name;
+    int ret;
+
+    ret = vfio_get_dev_region_info(&vdev->vbasedev,
+                                   VFIO_REGION_TYPE_NESTED,
+                                   VFIO_REGION_SUBTYPE_NESTED_DMA_FAULT,
+                                   &fault_region_info);
+    if (ret) {
+        goto out;
+    }
+
+    hdr = vfio_get_region_info_cap(fault_region_info,
+                                   VFIO_REGION_INFO_CAP_DMA_FAULT);
+    if (!hdr) {
+        error_setg(errp, "failed to retrieve DMA FAULT capability");
+        goto out;
+    }
+    cap_fault = container_of(hdr, struct vfio_region_info_cap_fault,
+                             header);
+    if (cap_fault->version != 1) {
+        error_setg(errp, "Unsupported DMA FAULT API version %d",
+                   cap_fault->version);
+        goto out;
+    }
+
+    fault_region_name = g_strdup_printf("%s DMA FAULT %d",
+                                        vbasedev->name,
+                                        fault_region_info->index);
+
+    ret = vfio_region_setup(OBJECT(vdev), vbasedev,
+                            &vdev->dma_fault_region,
+                            fault_region_info->index,
+                            fault_region_name);
+    g_free(fault_region_name);
+    if (ret) {
+        error_setg_errno(errp, -ret,
+                         "failed to set up the DMA FAULT region %d",
+                         fault_region_info->index);
+        goto out;
+    }
+
+    ret = vfio_region_mmap(&vdev->dma_fault_region);
+    if (ret) {
+        error_setg_errno(errp, -ret, "Failed to mmap the DMA FAULT queue");
+    }
+out:
+    g_free(fault_region_info);
+}
+
 /**
  * vfio_populate_device - Allocate and populate MMIO region
  * and IRQ structs according to driver returned information
@@ -552,6 +608,7 @@ static int vfio_populate_device(VFIODevice *vbasedev, Error **errp)
     int i, ret = -1;
     VFIOPlatformDevice *vdev =
         container_of(vbasedev, VFIOPlatformDevice, vbasedev);
+    Error *err = NULL;
 
     if (!(vbasedev->flags & VFIO_DEVICE_FLAGS_PLATFORM)) {
         error_setg(errp, "this isn't a platform device");
@@ -577,6 +634,12 @@ static int vfio_populate_device(VFIODevice *vbasedev, Error **errp)
                                     vfio_intp_mmap_enable, vdev);
 
     QSIMPLEQ_INIT(&vdev->pending_intp_queue);
+
+    vfio_init_fault_regions(vdev, &err);
+    if (err) {
+        error_propagate(errp, err);
+        goto reg_error;
+    }
 
     for (i = 0; i < vbasedev->num_irqs; i++) {
         struct vfio_irq_info irq = { .argsz = sizeof(irq) };
@@ -606,7 +669,7 @@ static int vfio_populate_device(VFIODevice *vbasedev, Error **errp)
             goto regulator_err;
     }
 
-    vbasedev->gpio = g_new(VFIODevice, vbasedev->num_gpio_func);
+    vbasedev->gpio = g_new(VFIODeviceGpio, vbasedev->num_gpio_func);
     for (i = 0; i < vbasedev->num_gpio_func; i++) {
         ret = vfio_platform_get_gpio(vbasedev, i, errp);
         if (ret)
@@ -625,6 +688,7 @@ irq_err:
         g_free(intp);
     }
 reg_error:
+    vfio_region_finalize(&vdev->dma_fault_region);
     for (i = 0; i < vbasedev->num_regions; i++) {
         if (vdev->regions[i]) {
             vfio_region_finalize(vdev->regions[i]);
@@ -739,6 +803,169 @@ static int vfio_base_device_init(SysBusDevice *sbdev, Error **errp)
     return ret;
 }
 
+static int vfio_iommu_set_pasid_table(SysBusDevice *sbdev, IOMMUConfig *config)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+    VFIOContainer *container = vdev->vbasedev.group->container;
+    struct vfio_iommu_type1_set_pasid_table info;
+
+    info.argsz = sizeof(info);
+    info.flags = VFIO_PASID_TABLE_FLAG_SET;
+    memcpy(&info.config, &config->pasid_cfg, sizeof(config->pasid_cfg));
+
+    return ioctl(container->fd, VFIO_IOMMU_SET_PASID_TABLE, &info);
+}
+
+static VFIOPlatformPASIDOps vfio_platform_pasid_ops = {
+    .set_pasid_table = vfio_iommu_set_pasid_table,
+};
+
+static void vfio_platform_setup_pasid_ops(SysBusDevice *sbdev,
+                                          VFIOPlatformPASIDOps *ops)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+
+    assert(ops && !vdev->pasid_ops);
+    vdev->pasid_ops = ops;
+}
+
+bool vfio_platform_device_is_pasid_ops_set(SysBusDevice *sbdev)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+
+    return !!(vdev && vdev->pasid_ops);
+}
+
+int vfio_platform_device_set_pasid_table(SysBusDevice *sbdev,
+                                         IOMMUConfig *config)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(sbdev);
+
+    if (vdev && vdev->pasid_ops && vdev->pasid_ops->set_pasid_table) {
+        return vdev->pasid_ops->set_pasid_table(sbdev, config);
+    }
+    return -ENOENT;
+}
+
+static void vfio_platform_dma_fault_notifier_handler(void *opaque)
+{
+    VFIOPlatformExtIRQ *ext_irq = opaque;
+    VFIOPlatformDevice *vdev = ext_irq->vdev;
+    AddressSpace *as = platform_bus_device_iommu_address_space(SYS_BUS_DEVICE(vdev));
+    IOMMUMemoryRegion *iommu_mr = IOMMU_MEMORY_REGION(as->root);
+    struct vfio_region_dma_fault header;
+    struct iommu_fault *queue;
+    char *queue_buffer = NULL;
+    ssize_t bytes;
+
+    if (!event_notifier_test_and_clear(&ext_irq->notifier)) {
+        return;
+    }
+
+    bytes = pread(vdev->vbasedev.fd, &header, sizeof(header),
+                  vdev->dma_fault_region.fd_offset);
+    if (bytes != sizeof(header)) {
+        error_report("%s unable to read the fault region header (0x%lx)",
+                     __func__, bytes);
+        return;
+    }
+
+    /* Normally the fault queue is mmapped */
+    queue = (struct iommu_fault *)vdev->dma_fault_region.mmaps[0].mmap;
+    if (!queue) {
+        size_t queue_size = header.nb_entries * header.entry_size;
+
+        error_report("%s: fault queue not mmapped: slower fault handling",
+                     vdev->vbasedev.name);
+
+        queue_buffer = g_malloc(queue_size);
+        bytes =  pread(vdev->vbasedev.fd, queue_buffer, queue_size,
+                       vdev->dma_fault_region.fd_offset + header.offset);
+        if (bytes != queue_size) {
+            error_report("%s unable to read the fault queue (0x%lx)",
+                         __func__, bytes);
+            return;
+        }
+
+        queue = (struct iommu_fault *)queue_buffer;
+    }
+
+    while (vdev->fault_tail_index != header.head) {
+        memory_region_inject_faults(iommu_mr, 1,
+                                    &queue[vdev->fault_tail_index]);
+        vdev->fault_tail_index =
+            (vdev->fault_tail_index + 1) % header.nb_entries;
+    }
+    bytes = pwrite(vdev->vbasedev.fd, &vdev->fault_tail_index, 4,
+                   vdev->dma_fault_region.fd_offset);
+    if (bytes != 4) {
+        error_report("%s unable to write the fault region tail index (0x%lx)",
+                     __func__, bytes);
+    }
+    g_free(queue_buffer);
+}
+
+static int vfio_platform_register_ext_irq_handler(VFIOPlatformDevice *vdev,
+                                         uint32_t type, uint32_t subtype,
+                                         IOHandler *handler)
+{
+    int32_t fd, ext_irq_index, index;
+    struct vfio_irq_info *irq_info;
+    Error *err = NULL;
+    EventNotifier *n;
+    int ret;
+
+    ret = vfio_get_dev_irq_info(&vdev->vbasedev, type, subtype, &irq_info);
+    if (ret) {
+        return ret;
+    }
+    index = irq_info->index;
+    ext_irq_index = irq_info->index - vdev->vbasedev.num_irqs;
+    g_free(irq_info);
+
+    vdev->ext_irqs[ext_irq_index].vdev = vdev;
+    vdev->ext_irqs[ext_irq_index].index = index;
+    n = &vdev->ext_irqs[ext_irq_index].notifier;
+
+    ret = event_notifier_init(n, 0);
+    if (ret) {
+        error_report("vfio: Unable to init event notifier for ext irq %d(%d)",
+                     ext_irq_index, ret);
+        return ret;
+    }
+
+    fd = event_notifier_get_fd(n);
+    qemu_set_fd_handler(fd, handler, NULL,
+                        &vdev->ext_irqs[ext_irq_index]);
+
+    ret = vfio_set_irq_signaling(&vdev->vbasedev, index, 0,
+                                 VFIO_IRQ_SET_ACTION_TRIGGER, fd, &err);
+    if (ret) {
+        error_reportf_err(err, VFIO_MSG_PREFIX, vdev->vbasedev.name);
+        qemu_set_fd_handler(fd, NULL, NULL, vdev);
+        event_notifier_cleanup(n);
+    }
+    return ret;
+}
+
+static void vfio_platform_unregister_ext_irq_notifiers(VFIOPlatformDevice *vdev)
+{
+    VFIODevice *vbasedev = &vdev->vbasedev;
+    Error *err = NULL;
+    int i;
+
+    for (i = 0; i < vbasedev->num_ext_irqs; i++) {
+        if (vfio_set_irq_signaling(vbasedev, i + vbasedev->num_irqs , 0,
+                                   VFIO_IRQ_SET_ACTION_TRIGGER, -1, &err)) {
+            error_reportf_err(err, VFIO_MSG_PREFIX, vdev->vbasedev.name);
+        }
+        qemu_set_fd_handler(event_notifier_get_fd(&vdev->ext_irqs[i].notifier),
+                            NULL, NULL, vdev);
+        event_notifier_cleanup(&vdev->ext_irqs[i].notifier);
+    }
+    g_free(vdev->ext_irqs);
+}
+
 /**
  * vfio_platform_realize  - the device realize function
  * @dev: device state pointer
@@ -800,6 +1027,11 @@ static void vfio_platform_realize(DeviceState *dev, Error **errp)
     }
 out:
     if (!ret) {
+
+        vfio_platform_register_ext_irq_handler(vdev, VFIO_IRQ_TYPE_NESTED,
+                                      VFIO_IRQ_SUBTYPE_DMA_FAULT,
+                                      vfio_platform_dma_fault_notifier_handler);
+        vfio_platform_setup_pasid_ops(sbdev, &vfio_platform_pasid_ops);
         return;
     }
 
@@ -808,6 +1040,13 @@ out:
     } else {
         error_prepend(errp, "vfio error: ");
     }
+}
+
+static void vfio_platform_unrealize(DeviceState *dev, Error **errp)
+{
+    VFIOPlatformDevice *vdev = VFIO_PLATFORM_DEVICE(dev);
+
+    vfio_platform_unregister_ext_irq_notifiers(vdev);
 }
 
 static const VMStateDescription vfio_platform_vmstate = {
@@ -834,6 +1073,7 @@ static void vfio_platform_class_init(ObjectClass *klass, void *data)
     SysBusDeviceClass *sbc = SYS_BUS_DEVICE_CLASS(klass);
 
     dc->realize = vfio_platform_realize;
+    dc->unrealize = vfio_platform_unrealize;
     device_class_set_props(dc, vfio_platform_dev_properties);
     dc->vmsd = &vfio_platform_vmstate;
     dc->desc = "VFIO-based platform device assignment";

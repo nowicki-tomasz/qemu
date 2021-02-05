@@ -344,6 +344,30 @@ struct iommu_pasid_smmuv3 {
 };
 
 /**
+ * struct iommu_pasid_smmuv2 - ARM SMMUv2 Context stage 1 related information
+ * @version: API version of this structure
+ * @s1fmt: STE s1fmt (format of the CD table: single CD, linear table
+ *         or 2-level table)
+ * @s1dss: STE s1dss (specifies the behavior when @pasid_bits != 0
+ *         and no PASID is passed along with the incoming transaction)
+ * @padding: reserved for future use (should be zero)
+ */
+struct iommu_pasid_smmuv2 {
+#define PASID_TABLE_SMMUV2_CFG_VERSION_1 1
+    __u32   version;
+    __u64   ttbr[2];
+    __u32   tcr[2];
+    __u32   mair[2];
+    __u16   asid;
+#define ASID_TABLE_SMMUV2_CTX_FMT_NONE       0
+#define ASID_TABLE_SMMUV2_CTX_FMT_AARCH64    1
+#define ASID_TABLE_SMMUV2_CTX_FMT_AARCH32_L  2
+#define ASID_TABLE_SMMUV2_CTX_FMT_AARCH32_S  3
+    __u8    s1fmt;
+    __u8    padding[1];
+};
+
+/**
  * struct iommu_pasid_table_config - PASID table data used to bind guest PASID
  *     table to the host IOMMU
  * @version: API version to prepare for future extensions
@@ -359,6 +383,7 @@ struct iommu_pasid_table_config {
 #define PASID_TABLE_CFG_VERSION_1 1
 	__u32	version;
 #define IOMMU_PASID_FORMAT_SMMUV3	1
+#define IOMMU_PASID_FORMAT_SMMUV2   2
 	__u32	format;
 	__u64	base_ptr;
 	__u8	pasid_bits;
@@ -369,6 +394,7 @@ struct iommu_pasid_table_config {
 	__u8    padding[6];
 	union {
 		struct iommu_pasid_smmuv3 smmuv3;
+		struct iommu_pasid_smmuv2 smmuv2;
 	};
 };
 

@@ -210,6 +210,8 @@ struct vfio_device_info {
     __u32   num_phys;   /* Max phy index + 1 */
     __u32   num_pctrl_states; /* Max pctrl_states index + 1 */
     __u32   num_gpio;   /* Max pctrl_states index + 1 */
+    __u32   num_ext_irqs;   /* Max extended IRQ index + 1 */
+    __u32   num_ext_regions;/* Max extended region index + 1 */
 };
 #define VFIO_DEVICE_GET_INFO		_IO(VFIO_TYPE, VFIO_BASE + 7)
 
