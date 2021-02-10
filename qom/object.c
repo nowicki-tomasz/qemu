@@ -1781,6 +1781,8 @@ static Object *object_resolve_link(Object *obj, const char *name,
         target = object_resolve_path(path, &ambiguous);
         if (target || ambiguous) {
             error_setg(errp, QERR_INVALID_PARAMETER_TYPE, name, target_type);
+            error_report("name %s path %s target %p amb %s",
+                         name, path, target, ambiguous ? "yes" : "no");
         } else {
             error_set(errp, ERROR_CLASS_DEVICE_NOT_FOUND,
                       "Device '%s' not found", path);

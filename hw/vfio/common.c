@@ -1857,6 +1857,8 @@ int vfio_get_device(VFIOGroup *group, const char *name,
     struct vfio_device_info dev_info = { .argsz = sizeof(dev_info) };
     int ret, fd;
 
+    error_report("%s -------------> 0", __func__);
+
     fd = ioctl(group->fd, VFIO_GROUP_GET_DEVICE_FD, name);
     if (fd < 0) {
         error_setg_errno(errp, errno, "error getting device from group %d",
@@ -1867,12 +1869,16 @@ int vfio_get_device(VFIOGroup *group, const char *name,
         return fd;
     }
 
+    error_report("%s -------------> 1", __func__);
+
     ret = ioctl(fd, VFIO_DEVICE_GET_INFO, &dev_info);
     if (ret) {
         error_setg_errno(errp, errno, "error getting device info");
         close(fd);
         return ret;
     }
+
+    error_report("%s -------------> 2", __func__);
 
     /*
      * Clear the balloon inhibitor for this group if the driver knows the
@@ -1894,6 +1900,8 @@ int vfio_get_device(VFIOGroup *group, const char *name,
         }
     }
 
+    error_report("%s -------------> 4", __func__);
+
     vbasedev->fd = fd;
     vbasedev->group = group;
     QLIST_INSERT_HEAD(&group->device_list, vbasedev, next);
@@ -1910,12 +1918,13 @@ int vfio_get_device(VFIOGroup *group, const char *name,
     vbasedev->num_ext_irqs = dev_info.num_ext_irqs;
     vbasedev->num_ext_regions = dev_info.num_ext_regions;
 
-    error_report("%s irq %d regions %d clocks %d regulators %d inter %d phys %d pctrl states %d gpios %d",
+    error_report("%s irq %d regions %d clocks %d regulators %d inter %d phys %d pctrl states %d gpios %d ext_irqs %d ext_regions %d",
             __func__,
             vbasedev->num_irqs, vbasedev->num_regions, vbasedev->num_clks,
             vbasedev->num_regulators, vbasedev->num_interconnects,
             vbasedev->num_phys, vbasedev->num_pctrl_states,
-            vbasedev->num_gpio_func);
+            vbasedev->num_gpio_func, vbasedev->num_ext_irqs,
+            vbasedev->num_ext_regions);
 
     trace_vfio_get_device(name, dev_info.flags, dev_info.num_regions,
                           dev_info.num_irqs);
@@ -2033,9 +2042,13 @@ int vfio_get_dev_irq_info(VFIODevice *vbasedev, uint32_t type,
         struct vfio_info_cap_header *hdr;
         struct vfio_irq_info_cap_type *cap_type;
 
+        error_report("%s: asking for irq = %d", __func__, i);
+
         if (vfio_get_irq_info(vbasedev, i, info)) {
             continue;
         }
+
+        error_report("%s: irq = %d exists", __func__, i);
 
         hdr = vfio_get_irq_info_cap(*info, VFIO_IRQ_INFO_CAP_TYPE);
         if (!hdr) {
@@ -2043,14 +2056,21 @@ int vfio_get_dev_irq_info(VFIODevice *vbasedev, uint32_t type,
             continue;
         }
 
+        error_report("%s: irq = %d is extended one", __func__, i);
+
         cap_type = container_of(hdr, struct vfio_irq_info_cap_type, header);
 
         trace_vfio_get_dev_irq(vbasedev->name, i,
                                cap_type->type, cap_type->subtype);
 
         if (cap_type->type == type && cap_type->subtype == subtype) {
+
+            error_report("%s: irq = %d is the one", __func__, i);
+
             return 0;
         }
+
+        error_report("%s: irq = %d wrong type", __func__, i);
 
         g_free(*info);
     }

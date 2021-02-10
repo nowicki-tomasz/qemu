@@ -1424,7 +1424,6 @@ static void create_platform_bus(VirtMachineState *vms)
     qdev_prop_set_uint32(dev, "num_irqs", PLATFORM_BUS_NUM_IRQS);
     qdev_prop_set_uint32(dev, "mmio_size", vms->memmap[VIRT_PLATFORM_BUS].size);
     qdev_init_nofail(dev);
-    vms->platform_bus_dev = dev;
 
     s = SYS_BUS_DEVICE(dev);
     for (i = 0; i < PLATFORM_BUS_NUM_IRQS; i++) {
@@ -1445,6 +1444,9 @@ static void create_platform_bus(VirtMachineState *vms)
             break;
         }
     }
+
+    /* XXX: Avoid MMIO base address map conflict*/
+    vms->platform_bus_dev = dev;
 }
 
 static void create_secure_ram(VirtMachineState *vms,

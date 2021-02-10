@@ -1945,7 +1945,7 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
 
     if (vfio_platform_match_raw(sbdev, "qcom,adreno-gmu")) {
         char *subnode_name, *opp_node_name;
-        uint32_t subnode_phandle;
+        uint32_t subnode_phandle, sid, *iommu_attr;
 
         if (gmu_phandle == 0)
             gmu_phandle = qemu_fdt_alloc_phandle(fdt);
@@ -1968,11 +1968,20 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
         qemu_fdt_add_subnode(fdt, opp_node_name);
         qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x30);
         qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0xbebc200);
+
+        sid = object_property_get_uint(OBJECT(sbdev), "request-id", &error_abort);
+        iommu_attr = g_new(uint32_t, 3);
+        iommu_attr[0] = cpu_to_be32(VIRT_MACHINE(current_machine)->iommu_phandle);
+        iommu_attr[1] = cpu_to_be32(sid);
+        iommu_attr[2] = cpu_to_be32(0);
+        qemu_fdt_setprop(fdt, node_name, "iommus", iommu_attr,
+                         3 * sizeof(uint32_t));
+
     }
 
     if (vfio_platform_match_raw(sbdev, "qcom,adreno")) {
         char *subnode_name, *opp_node_name;
-        uint32_t subnode_phandle;
+        uint32_t subnode_phandle, sid, *iommu_attr;
 
         if (gmu_phandle == 0)
             gmu_phandle = qemu_fdt_alloc_phandle(fdt);
@@ -2032,6 +2041,14 @@ static int add_qcom_trogdor_fdt_node(SysBusDevice *sbdev, void *opaque,
         qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-level", 0x180);
         qemu_fdt_setprop_cell(fdt, opp_node_name, "opp-peak-kBps", 0x823020);
         qemu_fdt_setprop_cells(fdt, opp_node_name, "opp-hz", 0, 0x2faf0800);
+
+        sid = object_property_get_uint(OBJECT(sbdev), "request-id", &error_abort);
+        iommu_attr = g_new(uint32_t, 3);
+        iommu_attr[0] = cpu_to_be32(VIRT_MACHINE(current_machine)->iommu_phandle);
+        iommu_attr[1] = cpu_to_be32(sid);
+        iommu_attr[2] = cpu_to_be32(0);
+        qemu_fdt_setprop(fdt, node_name, "iommus", iommu_attr,
+                         3 * sizeof(uint32_t));
     }
 
     error_report("%s 2", __func__);
@@ -2279,7 +2296,7 @@ static int add_qcom_trogdor_dwc3_child_node(SysBusDevice *sbdev, void *opaque,
         g_free(irq_attr);
     }
 
-    sid = qemu_fdt_alloc_requestid(fdt_guest);
+    sid = object_property_get_uint(OBJECT(sbdev), "request-id", &error_abort);
     iommu_attr = g_new(uint32_t, 3);
     iommu_attr[0] = cpu_to_be32(VIRT_MACHINE(current_machine)->iommu_phandle);
     iommu_attr[1] = cpu_to_be32(sid);
@@ -2287,7 +2304,6 @@ static int add_qcom_trogdor_dwc3_child_node(SysBusDevice *sbdev, void *opaque,
     qemu_fdt_setprop(fdt_guest, node_name, "iommus", iommu_attr,
                      3 * sizeof(uint32_t));
     g_free(iommu_attr);
-    object_property_set_uint(OBJECT(sbdev), sid, "request-id", &error_abort);
 
     guest_clk_phandle = g_new(uint32_t, vbasedev->num_clks);
     for (i = 0; i < vbasedev->num_clks;  i++) {
@@ -3783,6 +3799,14 @@ static int add_qcom_trogdor_fdt_mdss_node(SysBusDevice *sbdev, void *opaque,
                          irq_attr, vbasedev->num_irqs * 3 * sizeof(uint32_t));
         g_free(irq_attr);
     }
+
+//    sid = object_property_get_uint(OBJECT(sbdev), "request-id", &error_abort);
+//    iommu_attr = g_new(uint32_t, 3);
+//    iommu_attr[0] = cpu_to_be32(VIRT_MACHINE(current_machine)->iommu_phandle);
+//    iommu_attr[1] = cpu_to_be32(sid);
+//    iommu_attr[2] = cpu_to_be32(0);
+//    qemu_fdt_setprop(fdt_guest, node_name, "iommus", iommu_attr,
+//                     3 * sizeof(uint32_t));
 
     error_report("%s 4", __func__);
 

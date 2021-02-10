@@ -913,6 +913,8 @@ static void smmuv2_notify_config_change(RegisterInfo *reg, uint64_t val)
     s = sdev->smmu;
     cb_offset = smmu_cb_offset(s, status.cb);
 
+    error_report("status.cb %d, cb_offset %d",  status.cb, cb_offset);
+
     /* TTBRs */
     ttbr = s->regs[R_SMMU_CB0_TTBR0_HIGH + cb_offset];
     ttbr <<= 32;
@@ -942,19 +944,22 @@ static void smmuv2_notify_config_change(RegisterInfo *reg, uint64_t val)
     iommu_config.pasid_cfg.smmuv2.mair[0] = s->regs[R_SMMU_CB0_PRRR_MAIR0 + cb_offset];
     iommu_config.pasid_cfg.smmuv2.mair[1] = s->regs[R_SMMU_CB0_NMRR_MAIR1 + cb_offset];
 
-    /* We don't support S1 32bit page-tables yet */
-    if (!FIELD_EX32(s->regs[R_SMMU_CBA2R0 + status.cb], SMMU_CBA2R0, VA64)) {
-        error_report("SMMU does not support S1 32bit page-tables yet");
-        g_assert_not_reached();
-    }
-    iommu_config.pasid_cfg.smmuv2.s1fmt = ASID_TABLE_SMMUV2_CTX_FMT_AARCH64;
-
     if (cfg->disabled || cfg->bypassed) {
         iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_BYPASS;
+        error_report("IOMMU_PASID_CONFIG_BYPASS");
     } else if (cfg->aborted) {
         iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_ABORT;
+        error_report("IOMMU_PASID_CONFIG_ABORT");
     } else {
         iommu_config.pasid_cfg.config = IOMMU_PASID_CONFIG_TRANSLATE;
+        error_report("IOMMU_PASID_CONFIG_TRANSLATE");
+
+        /* We don't support S1 32bit page-tables yet */
+        if (!FIELD_EX32(s->regs[R_SMMU_CBA2R0 + status.cb], SMMU_CBA2R0, VA64)) {
+            error_report("SMMU does not support S1 32bit page-tables yet");
+            g_assert_not_reached();
+        }
+        iommu_config.pasid_cfg.smmuv2.s1fmt = ASID_TABLE_SMMUV2_CTX_FMT_AARCH64;
     }
 
 //    trace_smmuv3_notify_config_change(mr->parent_obj.name,
@@ -1040,7 +1045,7 @@ static const RegisterAccessInfo smmu500_regs_info[] = {
         .reset = 0x30000f10,
         .ro = 0xf0ff9fff,
     },{ .name = "SMMU_SIDR2",  .addr = A_SMMU_SIDR2,
-        .reset = 0x5555,
+        .reset = 0x5111,
         .ro = 0x7fff,
     },{ .name = "SMMU_SIDR7",  .addr = A_SMMU_SIDR7,
         .reset = 0x21,

@@ -557,6 +557,9 @@ static void vfio_init_fault_regions(VFIOPlatformDevice *vdev, Error **errp)
         goto out;
     }
 
+    error_report("%s found ext region index = %d",
+            __func__, fault_region_info->index);
+
     hdr = vfio_get_region_info_cap(fault_region_info,
                                    VFIO_REGION_INFO_CAP_DMA_FAULT);
     if (!hdr) {
@@ -570,6 +573,9 @@ static void vfio_init_fault_regions(VFIOPlatformDevice *vdev, Error **errp)
                    cap_fault->version);
         goto out;
     }
+
+    error_report("%s ext region index = %d has required caps",
+            __func__, fault_region_info->index);
 
     fault_region_name = g_strdup_printf("%s DMA FAULT %d",
                                         vbasedev->name,
@@ -587,10 +593,17 @@ static void vfio_init_fault_regions(VFIOPlatformDevice *vdev, Error **errp)
         goto out;
     }
 
+    error_report("%s ext region index = %d setup properly",
+            __func__, fault_region_info->index);
+
     ret = vfio_region_mmap(&vdev->dma_fault_region);
     if (ret) {
         error_setg_errno(errp, -ret, "Failed to mmap the DMA FAULT queue");
     }
+
+    error_report("%s ext region index = %d mapped properly, ret = %d",
+                __func__, fault_region_info->index, ret);
+
 out:
     g_free(fault_region_info);
 }
@@ -728,6 +741,8 @@ static int vfio_base_device_init(SysBusDevice *sbdev, Error **errp)
     int groupid;
     int ret;
 
+    error_report("%s -------------> 00", __func__);
+
     /* @sysfsdev takes precedence over @host */
     if (vbasedev->sysfsdev) {
         g_free(vbasedev->name);
@@ -793,7 +808,12 @@ static int vfio_base_device_init(SysBusDevice *sbdev, Error **errp)
         return ret;
     }
 
-    error_report("%s -------------> 3", __func__);
+    error_report("%s -------------> 3 nb_ext_irqs %d", __func__, vdev->vbasedev.num_ext_irqs);
+    if (vdev->vbasedev.num_ext_irqs > 0) {
+        vdev->ext_irqs = g_new0(VFIOPlatformExtIRQ, vdev->vbasedev.num_ext_irqs);
+    }
+
+    error_report("%s -------------> 4", __func__);
 
     ret = vfio_populate_device(vbasedev, errp);
     if (ret) {
@@ -915,13 +935,23 @@ static int vfio_platform_register_ext_irq_handler(VFIOPlatformDevice *vdev,
     EventNotifier *n;
     int ret;
 
+    error_report("%s: 0", __func__);
+
     ret = vfio_get_dev_irq_info(&vdev->vbasedev, type, subtype, &irq_info);
     if (ret) {
         return ret;
     }
+
+    error_report("%s: 1 irq_info->index = %d, vdev->vbasedev.num_irqs = %d",
+            __func__, (int)irq_info->index, (int)vdev->vbasedev.num_irqs);
+
     index = irq_info->index;
     ext_irq_index = irq_info->index - vdev->vbasedev.num_irqs;
     g_free(irq_info);
+
+    error_report("%s: 2 ext_irq_index = %d", __func__, (int)ext_irq_index);
+
+    assert(ext_irq_index >= 0 && ext_irq_index < vdev->vbasedev.num_ext_irqs);
 
     vdev->ext_irqs[ext_irq_index].vdev = vdev;
     vdev->ext_irqs[ext_irq_index].index = index;
@@ -934,13 +964,21 @@ static int vfio_platform_register_ext_irq_handler(VFIOPlatformDevice *vdev,
         return ret;
     }
 
+    error_report("%s: 3", __func__);
+
     fd = event_notifier_get_fd(n);
+
+    error_report("%s: 4", __func__);
+
     qemu_set_fd_handler(fd, handler, NULL,
                         &vdev->ext_irqs[ext_irq_index]);
+
+    error_report("%s: 5", __func__);
 
     ret = vfio_set_irq_signaling(&vdev->vbasedev, index, 0,
                                  VFIO_IRQ_SET_ACTION_TRIGGER, fd, &err);
     if (ret) {
+        error_report("%s: 6", __func__);
         error_reportf_err(err, VFIO_MSG_PREFIX, vdev->vbasedev.name);
         qemu_set_fd_handler(fd, NULL, NULL, vdev);
         event_notifier_cleanup(n);
@@ -980,6 +1018,8 @@ static void vfio_platform_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbdev = SYS_BUS_DEVICE(dev);
     VFIODevice *vbasedev = &vdev->vbasedev;
     int i, ret;
+
+    error_report("%s -------------> 0", __func__);
 
     vbasedev->type = VFIO_DEVICE_TYPE_PLATFORM;
     vbasedev->dev = dev;

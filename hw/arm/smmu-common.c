@@ -371,18 +371,27 @@ static AddressSpace *platform_smmu_find_add_as(PlatformBusDevice *pbus,
     SMMUDevice *sdev;
     static unsigned int index;
 
+    error_report("%s 0", __func__);
+
     if (!spbus) {
+
+        error_report("%s no spbus, creating a new one...", __func__);
+
         spbus = g_malloc0(sizeof(SMMUPlatformBus));
         spbus->pbus = pbus;
         g_hash_table_insert(s->smmu_platformbus_by_busptr, pbus, spbus);
         spbus->smmu_platformdev_by_devptr = g_hash_table_new(NULL, NULL);
     }
 
+    error_report("%s 1", __func__);
+
     sdev = g_hash_table_lookup(spbus->smmu_platformdev_by_devptr, sbdev);
     if (!sdev) {
         char *name = g_strdup_printf("%s-%d", s->mrtypename, index++);
 
         sdev = g_new0(SMMUDevice, 1);
+
+        error_report("%s no sdev, creating a new one...", __func__);
 
         sdev->smmu = s;
         sdev->pbus = pbus;
@@ -400,6 +409,8 @@ static AddressSpace *platform_smmu_find_add_as(PlatformBusDevice *pbus,
         trace_smmu_add_mr(name);
         g_free(name);
     }
+
+    error_report("%s 2", __func__);
 
     return &sdev->as;
 }
@@ -530,7 +541,7 @@ static void smmu_base_reset(DeviceState *dev)
 static Property smmu_dev_properties[] = {
     DEFINE_PROP_UINT8("bus_num", SMMUState, bus_num, 0),
     DEFINE_PROP_LINK("primary-bus", SMMUState, primary_bus, "PCI", PCIBus *),
-    DEFINE_PROP_LINK("platform-bus", SMMUState, pbus, "platform", PlatformBusDevice *),
+    DEFINE_PROP_LINK("platform-bus", SMMUState, pbus, "platform-bus-device", PlatformBusDevice *),
     DEFINE_PROP_END_OF_LIST(),
 };
 
